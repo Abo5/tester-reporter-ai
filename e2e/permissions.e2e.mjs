@@ -230,3 +230,55 @@ test("the ungranted fallback survives a full page navigation", async () => {
 
   await page.close();
 });
+
+test("the side panel warns about an ungranted site, and stops once granted", async () => {
+  // THE FIX FOR THE REPORTED PROBLEM. The tester recorded a journey that
+  // captured one click and nine navigations and was told nothing about it. The
+  // panel now says so BEFORE the recording.
+  //
+  // The panel is opened as a tab here, so the active-tab query would return the
+  // panel itself. Activating the fixture tab afterwards makes it the active tab
+  // and fires the panel's own tabs.onActivated listener - which is the real
+  // code path, not a simulation of it.
+  const permissions = await extensionPage.evaluate(
+    () => new Promise((resolve) => chrome.permissions.getAll(resolve)));
+  assert.deepEqual(permissions.origins, [
+    "https://generativelanguage.googleapis.com/*",
+  ], "this test needs to start with nothing granted");
+
+  const panel = await openExtensionPage(browser.context, browser.extensionId,
+    "sidepanel/sidepanel.html");
+  await panel.waitForTimeout(800);
+
+  const site = await browser.context.newPage();
+  await site.goto(`${server.url}/catalog.html`, { waitUntil: "load" });
+  await site.bringToFront();
+  await panel.waitForTimeout(1500);
+
+  const warningShown = await panel.evaluate(
+    () => !document.getElementById("grant-card").hidden);
+  const warningText = await panel.evaluate(
+    () => document.getElementById("grant-body").textContent);
+  console.log(`  warning shown: ${warningShown}`);
+  console.log(`  warning text : ${(warningText || "").slice(0, 90)}…`);
+
+  assert.equal(warningShown, true,
+    "the panel said nothing about an ungranted site, which is the exact "
+    + "failure the tester reported");
+  assert.match(warningText, /will not be recorded/,
+    "the warning must say what is lost, not merely that something is wrong");
+
+  // Grant it, and the warning must go away by itself - the panel listens for
+  // permissions.onAdded, so the tester does not have to reopen anything.
+  await grantOriginLikeATester(extensionPage, server.url);
+  await site.bringToFront();
+  await panel.waitForTimeout(1500);
+
+  const stillShown = await panel.evaluate(
+    () => !document.getElementById("grant-card").hidden);
+  assert.equal(stillShown, false,
+    "the warning stayed up after the site was granted");
+
+  await panel.close();
+  await site.close();
+});
