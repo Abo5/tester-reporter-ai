@@ -13,7 +13,11 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
 
-const EXTENSION_DIR = path.resolve(import.meta.dirname, "..", "dist");
+// The built extension. TRA_EXTENSION_DIR overrides it, so an experiment can
+// load a patched copy of the manifest without disturbing dist/.
+const EXTENSION_DIR = process.env.TRA_EXTENSION_DIR
+  ? path.resolve(process.env.TRA_EXTENSION_DIR)
+  : path.resolve(import.meta.dirname, "..", "dist");
 
 /**
  * Launches Chromium with the extension and waits for its service worker.
@@ -252,4 +256,45 @@ async function findBrowserWindowId(run) {
   // A browser window is at least a few hundred pixels on a side. Anything
   // smaller is a helper, and activating it would send the shortcut nowhere.
   return bestArea > 200 * 200 ? bestId : "";
+}
+
+/**
+ * Grants one origin to the extension, the way a tester does it.
+ *
+ * The extension ships with no page access: <all_urls> lives in
+ * optional_host_permissions, and the content scripts are registered at run time
+ * for whatever has been granted. So a test that wants to record anything has to
+ * grant first, exactly as a real tester would.
+ *
+ * This drives the REAL flow rather than pre-seeding the profile: a trusted click
+ * on the options page, then Chrome's own modal, accepted with a real keypress.
+ * chrome.permissions.request() hangs until that modal is answered, so the click
+ * promise is deliberately not awaited until afterwards.
+ *
+ * REQUIRES A WINDOW MANAGER. Chrome draws the permission modal inside the
+ * browser window rather than as its own X window, so the keypress only lands if
+ * xdotool can activate that window - which needs a WM. Under bare Xvfb the
+ * modal appears, the keys go nowhere, and the grant silently never happens.
+ * Run these tests the way test:e2e:video does, with openbox started first.
+ *
+ * Returns true if the origin ended up granted.
+ */
+export async function grantOriginLikeATester(extensionPage, originText) {
+  await extensionPage.fill("#origin-input", originText);
+  const clicking = extensionPage.click("#grant-origin-button");
+
+  await extensionPage.waitForTimeout(1500);
+  await sendBrowserShortcut("Tab");        // focus starts on Deny
+  await extensionPage.waitForTimeout(300);
+  await sendBrowserShortcut("Return");     // ...so Tab lands on Allow
+  await extensionPage.waitForTimeout(1200);
+
+  await clicking.catch(() => {});
+
+  const permissions = await extensionPage.evaluate(
+    () => new Promise((resolve) => chrome.permissions.getAll(resolve)));
+  const origins = permissions.origins || [];
+  return origins.some((origin) => origin.startsWith("http://")
+    || (origin.startsWith("https://")
+        && origin.indexOf("generativelanguage") === -1));
 }

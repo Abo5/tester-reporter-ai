@@ -128,10 +128,6 @@ button.danger {
   color: var(--text-muted);
 }
 
-.verify-note {
-  border-left: 3px solid var(--warning-border);
-  padding-left: 10px;
-}
 
 .warning-box {
   background: var(--warning-background);
@@ -188,4 +184,32 @@ code {
   text-align: center;
   color: var(--ok);
   font-size: 13px;
+}
+
+/* The granted-origins list. One row per origin, with its own revoke button. */
+.origin-list {
+  list-style: none;
+  margin: 12px 0 0 0;
+  padding: 0;
+}
+
+.origin-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  word-break: break-all;
+}
+
+.origin-list li.empty {
+  font-family: inherit;
+  color: var(--text-muted);
+  border-style: dashed;
+  justify-content: flex-start;
 }

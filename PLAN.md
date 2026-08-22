@@ -57,6 +57,7 @@ been run, and they are settled.
 | V13 | `content_scripts[].world: "MAIN"` minimum Chrome version | Chrome content scripts docs | ✅ **CONFIRMED** — world: MAIN content script runs at document_start |
 | V14 | Whether `chrome.webRequest` (non-blocking) still reports `statusCode` in `onCompleted`/`onErrorOccurred` in MV3 with only host permissions | Chrome webRequest docs | ✅ **CONFIRMED** — webRequest reports statusCode 500 under MV3 with host permissions |
 | V15 | Whether `fetch()` to `generativelanguage.googleapis.com` from an MV3 service worker needs the host in `host_permissions` (I assume yes) | Chrome CORS-for-extensions docs | ✅ **CONFIRMED** — fetch to generativelanguage.googleapis.com works from the extension |
+| V16 | Whether a static `content_scripts` entry with `<all_urls>` matches forces the broad host grant even when the host permission is optional | Measure it on a fresh profile | ✅ **ANSWERED — yes, it does.** The static entries were deleted; the scripts are registered at run time for granted origins only. See 13.3. |
 
 ---
 
@@ -7076,13 +7077,31 @@ records the screen, that is a frightening combination, and the fear is reasonabl
 specific origins they test — `https://staging.example.sa/*` — via
 `chrome.permissions.request()`. Recording on a site with no grant falls back to
 `activeTab`, which is scoped to the tab the tester explicitly invoked the extension on.
-The static `content_scripts` entries still declare `<all_urls>` matches, but a content
-script only actually runs where a host permission exists. ⚠️ VERIFY that a `content_scripts`
-entry with `<all_urls>` matches does not itself force a broad install-time prompt when the
-host permission is optional — if it does, the fix is to drop the static entries entirely
-and inject with `chrome.scripting.registerContentScripts()` after the grant, which is more
-code but keeps the prompt narrow. **This is worth an hour of testing before you commit to
-the manifest.**
+**✅ ANSWERED, and the answer was the bad one.** The VERIFY here asked whether a
+`content_scripts` entry with `<all_urls>` matches forces the broad grant anyway when the
+host permission is only optional. It does. Measured on a fresh profile:
+
+| manifest | `permissions.getAll().origins` |
+|---|---|
+| optional origins **+ static `content_scripts`** | `["http://*/*", "https://*/*", ".../generativelanguage..."]` |
+| optional origins, **entries deleted** | `[".../generativelanguage..."]`, and `contains({origins:["https://example.com/*"]})` → `false` |
+
+The static entry was the only variable. So the fix this section named is the one that
+shipped: **there are no static `content_scripts` entries at all.** The two scripts are
+registered at run time by `src/background/content-script-registration.ts`, for exactly the
+origins the tester has granted, and re-registered on `permissions.onAdded` /
+`onRemoved` so a grant takes effect without a browser restart.
+
+Recording on a site with no grant falls back to `activeTab`: the service worker injects
+both scripts into that one tab with `chrome.scripting.executeScript`. That fallback is a
+real downgrade and is documented as one — the MAIN-world script patches `fetch` when
+Record is pressed rather than at `document_start`, so requests the page made *before* that
+moment are not seen. Everything else is unaffected.
+
+`e2e/permissions.e2e.mjs` pins all of it: nothing granted on install, no scripts
+registered, grant through the real options-page flow (a trusted click plus Chrome's own
+modal, accepted with a real keypress), scripts registered for that origin **and no other**,
+a recording that then captures events, and revocation unregistering them again.
 
 **2. `tabCapture`.** Screen recording is inherently alarming and there is no way to soften
 it. What we can do is make it obvious when it is happening: Chrome shows its own recording
@@ -7342,7 +7361,7 @@ architecture. Listed honestly, worst first.
 | R1 | **The model `gemini-3.5-flash` may not exist.** | I have no knowledge of it and cannot confirm it. My cutoff is May 2026. | Verify first, before anything else. The model id is one constant. |
 | R2 | **Microphone in an offscreen document.** | I believe an offscreen document cannot raise a permission prompt, so the grant must be obtained from a normal extension page first — but I am not certain of the current behaviour. | Spike it. If it works directly, delete the options-page step. |
 | R3 | **The whole Gemini request/response shape.** | Field names for structured output, the Files API handshake, header names, the safety-block reporting shape, the video MIME list, the token accounting. Google reshapes this area between releases. | Read the docs, then write a single throwaway script that does one real call end to end before you write any of `gemini.ts`. |
-| R4 | **`<all_urls>` in static `content_scripts` may force a broad install prompt** even when the host permission is optional. | I am not certain how the install-time prompt is computed when matches are broad but host permissions are optional. | Test the install prompt with the real manifest. If it is broad, switch to `chrome.scripting.registerContentScripts()` after the grant. |
+| R4 | ~~**`<all_urls>` in static `content_scripts` may force a broad install prompt** even when the host permission is optional.~~ **CLOSED — it does.** | Was: not certain how the prompt is computed when matches are broad but host permissions are optional. | Measured on a fresh profile (see 13.3). The static entries were deleted and the scripts are now registered by `chrome.scripting.registerContentScripts()` for granted origins only. `e2e/permissions.e2e.mjs` keeps it that way. |
 | R5 | **`chrome.webRequest` status codes under MV3.** | Only the *blocking* webRequest was removed, so observational listeners should still report `statusCode` — but confirm rather than assume. | 10-minute test. |
 | R6 | **WebM from `MediaRecorder` may not be seekable** in the review page's `<video>` element, because Chrome omits duration from the header. | This has been a long-standing Chrome behaviour; it may be fixed. | Test the timeline-sync feature early. The workaround (force-seek to a large time) is known but ugly. |
 | R7 | **MP4 recording support** in `MediaRecorder`. | Chrome gained it relatively recently and I do not know the exact version. | `MediaRecorder.isTypeSupported()` at runtime, which the code already does. |
@@ -7494,7 +7513,8 @@ verifiable, and nothing depends on something that has not been proved yet.
    in a `<video>` element. *(Resolves R2, R6, R7.)*
 4. **Check the install prompt.** Build the manifest from 13.1 and look at the actual
    permission prompt. Decide static `content_scripts` vs `registerContentScripts()`.
-   *(Resolves R4.)*
+   *(Resolves R4.)* — **Done. The answer was `registerContentScripts()`:** a static entry
+   with `<all_urls>` matches forces the broad grant on its own. See 13.3.*
 
 **Week 1 — the skeleton**
 
@@ -7789,6 +7809,31 @@ path never reads request headers at all, so a list of which ones would be
 allowed described behaviour that does not exist) and five unused helpers. Unused
 code in a security-sensitive extension is code nobody has reviewed and nobody
 has tested.
+
+---
+
+### 19.n The permission model, and the cost gate
+
+Two things this plan asked for were missing from the built code until they were audited
+against the plan's own text. Both are now built. Neither was found by a test failing —
+they were found by reading section 13.3 and section 15 next to the code, which is a
+reminder that a passing suite only tests what someone thought to test.
+
+**The install prompt.** 13.3 required `<all_urls>` to live only in
+`optional_host_permissions`. It was in `host_permissions`, so the install prompt said
+"Read and change all your data on all websites" — the loudest thing an extension can ask
+for, on a product whose whole pitch is that it is careful with what it sees. Fixed, along
+with the VERIFY it depended on. See 13.3 for the measurement and `permissions.e2e.mjs`
+for the tests.
+
+**The cost gate.** 15 asked for the token estimate to appear "in the confirmation dialog
+*before* the request". It appeared, but as a status line written after the send had
+already started — the tester learned the price once it was already paid. Now
+`requestNeedsCostConfirmation()` gates any bundle over 50,000 estimated tokens and
+`describeRequestCost()` writes the sentence: *"This will send about 145,000 tokens of
+evidence, including a 300-second video."* The threshold is deliberately low enough that
+any session carrying a video crosses it, because the video is where the cost is. A dialog
+on every generation is a dialog people learn to dismiss unread, which is worse than none.
 
 ---
 

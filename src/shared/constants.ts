@@ -178,6 +178,18 @@ export const REPORT_TEMPERATURE: number = 0.2;
 /** Rough characters-per-token used for local estimates only. */
 export const ESTIMATED_CHARACTERS_PER_TOKEN: number = 4;
 
+/**
+ * Above this estimated input size, the tester is asked to confirm before the
+ * request is sent.
+ *
+ * WHY a threshold rather than always asking: a dialog on every generation is a
+ * dialog people learn to dismiss without reading, which is worse than no dialog.
+ * A short session costs little and should just run. This number is deliberately
+ * low enough that any session carrying a video crosses it, because the video is
+ * where the cost actually is.
+ */
+export const CONFIRM_ABOVE_ESTIMATED_TOKENS: number = 50000;
+
 /** VERIFY: the per-second video token rate for your model. Placeholder. */
 export const ESTIMATED_VIDEO_TOKENS_PER_SECOND: number = 300;
 

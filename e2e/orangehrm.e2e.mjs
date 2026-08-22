@@ -20,7 +20,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import {
   launchWithExtension, callExtension, readStore, openExtensionPage, waitFor,
-  readRecordingState,
+  readRecordingState, grantOriginLikeATester,
 } from "./harness.mjs";
 
 const SITE = "https://opensource-demo.orangehrmlive.com";
@@ -52,6 +52,12 @@ before(async () => {
   browser = await launchWithExtension();
   extensionPage = await openExtensionPage(browser.context, browser.extensionId,
     "options/options.html");
+  // Grant the real site, through the real options-page flow. The extension
+  // holds no page access on install, so this is not test scaffolding - it is
+  // the first thing a tester does before recording on a site.
+  const granted = await grantOriginLikeATester(extensionPage, SITE);
+  assert.ok(granted, "the site was not granted; is a window manager running?");
+
 });
 
 after(async () => {

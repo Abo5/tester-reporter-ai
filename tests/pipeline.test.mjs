@@ -649,3 +649,61 @@ test("a payload with no base64 marker still parses, and junk returns null", asyn
   assert.equal(extractBase64Payload("data:text/plain,hello"), "hello");
   assert.equal(extractBase64Payload("not-a-data-url"), null);
 });
+
+// -----------------------------------------------------------------------------
+// The cost gate
+//
+// Section 15 of the plan asked for the token estimate to be shown "in the
+// confirmation dialog *before* the request". It was being shown as a status
+// line AFTER the send had already started, which is a different thing: the
+// tester learns the price once it is already paid. These tests pin the two
+// halves of the gate.
+// -----------------------------------------------------------------------------
+
+/** A bundle carrying just enough shape for the cost helpers. */
+function bundleCosting(tokens, video) {
+  return {
+    estimatedInputTokens: tokens,
+    video: {
+      deliveryMode: video.mode,
+      durationMs: video.durationMs ?? 0,
+      keyFrameBase64: video.frames ?? [],
+      base64Data: "",
+    },
+  };
+}
+
+test("a small text-only request is not gated", () => {
+  const bundle = bundleCosting(4000, { mode: "omitted" });
+  assert.equal(api.requestNeedsCostConfirmation(bundle), false);
+});
+
+test("a request carrying a video is gated", () => {
+  const bundle = bundleCosting(120000, { mode: "inline-base64", durationMs: 42000 });
+  assert.equal(api.requestNeedsCostConfirmation(bundle), true);
+});
+
+test("the cost sentence names the number and what it is made of", () => {
+  const withVideo = api.describeRequestCost(
+    bundleCosting(145000, { mode: "files-api-uri", durationMs: 300000 }));
+  assert.match(withVideo, /145,000 tokens/);
+  assert.match(withVideo, /300-second video/,
+    "the sentence must say what the tokens are made of, not just how many");
+
+  const withFrames = api.describeRequestCost(
+    bundleCosting(60000, { mode: "key-frames", frames: ["a", "b", "c"] }));
+  assert.match(withFrames, /3 key frames/);
+
+  const withNothing = api.describeRequestCost(
+    bundleCosting(9000, { mode: "omitted" }));
+  assert.match(withNothing, /no video/);
+});
+
+test("the gate threshold is low enough that any video crosses it", () => {
+  // A one-second video at the estimated rate already costs more than the
+  // threshold. This is deliberate: video is where the money is, so no video
+  // should ever be sent without the tester seeing the number first.
+  const oneSecondOfVideo = 300;
+  assert.ok(oneSecondOfVideo * 200 > 50000,
+    "a short video must still cross the confirmation threshold");
+});

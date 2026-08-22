@@ -46,6 +46,8 @@ export {
   estimateInputTokens,
   findFailureEventIndexes,
   describeElementForModel,
+  describeRequestCost,
+  requestNeedsCostConfirmation,
 } from "../src/ai/bundle";
 export { chooseKeyFrameOffsets, isVideoMimeTypeSupported, extractBase64Payload }
   from "../src/ai/video";

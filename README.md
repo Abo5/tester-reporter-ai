@@ -194,20 +194,25 @@ warning, and forces confidence to `low`.
 
 ## Permissions, honestly
 
-The install prompt says **"Read and change all your data on all websites."** That
-is a frightening thing to ask for, and the fear is reasonable for an extension
-that also records your screen. Here is exactly why each piece is there, and what
-you can cut.
+**The install prompt asks for no site access at all.** The extension can reach
+one origin on install — the Gemini API — and nothing else. You grant the sites
+you actually test, one at a time, from the options page; Chrome's own dialog
+then says "Read and change your data on **staging.example.com**" rather than "on
+all websites".
+
+Here is exactly why each piece is there, and what you can cut.
 
 | Permission | Why |
 |---|---|
 | `tabCapture` | The video. There is no other way. |
 | `offscreen` | Hosts `MediaRecorder`; an MV3 service worker has no DOM. |
-| `host_permissions: http/https` | Content scripts must run on the site under test, and `webRequest` reports nothing without it. |
+| `host_permissions: generativelanguage.googleapis.com` | The only origin granted on install. An MV3 service worker cannot `fetch` a host it does not hold. |
+| `optional_host_permissions: http/https` | **Not granted on install.** Per-site, on request, from the options page. Content scripts are registered for granted origins only; `webRequest` reports nothing without a grant. |
+| `scripting` | Registers the content scripts for granted origins at run time, and injects into a single tab under `activeTab` when you record on a site you have not granted. |
 | `webRequest` | Status codes for requests the page's own JavaScript never reports. |
 | `webNavigation` | Real navigations, and the iframe tree for `frameLocator()` chains. |
 | `unlimitedStorage` | Videos are 8–70 MB per session. |
-| `tabs`, `activeTab`, `storage`, `sidePanel` | Tab metadata, settings, controls. |
+| `tabs`, `activeTab`, `storage`, `sidePanel` | Tab metadata, settings, controls. `activeTab` is also the fallback that lets you record on a site you have not granted. |
 
 **`webRequest` is the one to cut first** if the listing needs to look less
 alarming. Dropping it costs status codes for navigations and for requests the
@@ -215,16 +220,24 @@ application swallows internally. It does **not** cost response bodies — those 
 from the MAIN-world `fetch` patch. A build without it still produces good
 reports.
 
-**A narrower permission model is possible and is not implemented.** Declaring
-`optional_host_permissions` and registering content scripts dynamically with
-`chrome.scripting.registerContentScripts()` after a per-origin grant would keep
-the install prompt narrow. It is more code, it makes the first run worse, and
-whether a static `content_scripts` entry forces a broad prompt regardless needs
-to be tested rather than assumed — that is risk **R4** in PLAN.md section 16.
+**Recording on a site you have not granted still works**, and costs you one
+thing. Press Record and the extension injects into that single tab using
+`activeTab` — the one-tab permission Chrome gives an extension you just invoked.
+Clicks, typing, the page snapshot, the video and the generated script are all
+unaffected. What you lose is network capture for requests the page made *before*
+you pressed Record, because the `fetch` patch lands on invocation instead of at
+`document_start`. Granting the origin removes that gap.
 
-**Nothing is requested that is not used.** `scripting` and `desktopCapture` were
-in an earlier manifest and were removed once a review confirmed no code path
-called either. `desktopCapture` comes back when v2 implements screen recording.
+**Why there are no `content_scripts` in the manifest.** A static entry with
+`<all_urls>` matches forces the broad grant even when the host permission is
+optional — measured, not assumed: with the entries present a fresh profile
+reports both origin patterns as already granted; with the entries deleted it
+reports only the API origin. So the entries are gone and registration happens at
+run time. `e2e/permissions.e2e.mjs` holds that behaviour in place.
+
+**Nothing is requested that is not used.** `desktopCapture` was in an earlier
+manifest and was removed once a review confirmed no code path called it. It comes
+back when v2 implements screen recording.
 
 **`chrome.debugger` is deliberately NOT used.** It would give full response
 bodies and browser-generated console messages (CSP violations, mixed content,

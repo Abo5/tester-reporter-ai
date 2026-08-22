@@ -151,9 +151,21 @@ async function validateDist() {
   for (const [size, relative] of Object.entries(manifest.action.default_icon)) {
     check(relative, "action.default_icon[" + size + "]");
   }
-  for (let index = 0; index < manifest.content_scripts.length; index += 1) {
-    for (const js of manifest.content_scripts[index].js) {
-      check(js, "content_scripts[" + index + "].js");
+  // The content scripts are registered at run time, not declared in the
+  // manifest, so the manifest no longer names the files that have to exist.
+  // They still have to exist: chrome.scripting.registerContentScripts fails at
+  // run time with a path that is not in the package, and that failure would
+  // show up as "recording captured nothing" rather than as a build error.
+  // These are the two paths src/background/content-script-registration.ts asks
+  // for, checked here so a rename cannot ship silently.
+  check("content/page-world.js", "registerContentScripts");
+  check("content/recorder.js", "registerContentScripts");
+
+  if (manifest.content_scripts !== undefined) {
+    for (let index = 0; index < manifest.content_scripts.length; index += 1) {
+      for (const js of manifest.content_scripts[index].js) {
+        check(js, "content_scripts[" + index + "].js");
+      }
     }
   }
 

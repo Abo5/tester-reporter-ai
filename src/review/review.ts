@@ -37,7 +37,12 @@ import {
 import { getMediaBlob, deleteMediaForSession, type StoredMedia } from "../storage/media";
 import { readSettings, writeSettings, incrementRequestCount } from "../storage/settings";
 import { generatePlaywrightSpec, buildSpecFileName } from "../codegen/generate-spec";
-import { buildEvidenceBundle, findFailureEventIndexes } from "../ai/bundle";
+import {
+  buildEvidenceBundle,
+  describeRequestCost,
+  findFailureEventIndexes,
+  requestNeedsCostConfirmation,
+} from "../ai/bundle";
 import { generateBugReport, type GeminiOutcome } from "../ai/gemini";
 import { formatReportAsPlainText, formatReportWithMetadata } from "../ai/format";
 import {
@@ -744,6 +749,22 @@ async function runReportGeneration(allowVideoUpload: boolean): Promise<void> {
     }
 
     renderBundle(bundle);
+
+    // THE COST GATE. The estimate has to be in front of the tester BEFORE the
+    // request, not narrated while it is already in flight. A tester who sees
+    // the number afterwards has already spent it.
+    if (requestNeedsCostConfirmation(bundle)) {
+      const confirmed: boolean = window.confirm(
+        describeRequestCost(bundle)
+        + "\n\nIt will be sent to " + currentSettings.modelId
+        + ".\n\nSend it?");
+      if (!confirmed) {
+        reportStatusText.textContent =
+          "Cancelled. Nothing was sent. " + describeRequestCost(bundle);
+        return;
+      }
+    }
+
     reportStatusText.textContent =
       "Sending about " + bundle.estimatedInputTokens.toLocaleString()
       + " tokens to " + currentSettings.modelId + "…";

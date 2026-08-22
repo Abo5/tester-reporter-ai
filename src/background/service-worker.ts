@@ -17,6 +17,7 @@ import {
 import { installNavigationListeners } from "./navigation-listener";
 import { installNetworkListeners } from "./network-listener";
 import { logInfo, logWarning } from "../shared/logger";
+import { syncRegisteredContentScripts } from "./content-script-registration";
 
 /**
  * Opens the side panel ourselves when the toolbar icon is clicked.
@@ -125,6 +126,7 @@ function initialiseServiceWorker(): void {
 
   chrome.runtime.onInstalled.addListener(function onInstalled(): void {
     logInfo("worker", "Extension installed or updated.");
+    void syncRegisteredContentScripts();
     void reconcileStuckSessions()
       .then(runRetentionCleanup)
       .then(broadcastStatus);
@@ -132,10 +134,30 @@ function initialiseServiceWorker(): void {
 
   chrome.runtime.onStartup.addListener(function onStartup(): void {
     logInfo("worker", "Browser started.");
+    void syncRegisteredContentScripts();
     void reconcileStuckSessions()
       .then(runRetentionCleanup)
       .then(broadcastStatus);
   });
+
+  // The content scripts follow the grants. A tester who grants their staging
+  // origin from the options page should be recording on it a second later,
+  // without restarting the browser; a tester who revokes it should stop being
+  // watched immediately.
+  chrome.permissions.onAdded.addListener(function onPermissionAdded(): void {
+    logInfo("worker", "A permission was granted; re-registering content scripts.");
+    void syncRegisteredContentScripts();
+  });
+
+  chrome.permissions.onRemoved.addListener(function onPermissionRemoved(): void {
+    logInfo("worker", "A permission was revoked; re-registering content scripts.");
+    void syncRegisteredContentScripts();
+  });
+
+  // Also on plain worker start. onInstalled and onStartup do not fire when the
+  // worker is merely woken from idle, and a registration lost to any cause
+  // would otherwise stay lost until the next browser restart.
+  void syncRegisteredContentScripts();
 
   logInfo("worker", "Service worker initialised.");
 }

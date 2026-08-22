@@ -31,6 +31,7 @@ import {
   MAX_SNAPSHOT_CHARACTERS,
   ESTIMATED_CHARACTERS_PER_TOKEN,
   ESTIMATED_VIDEO_TOKENS_PER_SECOND,
+  CONFIRM_ABOVE_ESTIMATED_TOKENS,
   ESTIMATED_TOKENS_PER_KEY_FRAME,
   FAILURE_ATTRIBUTION_WINDOW_MS,
 } from "../shared/constants";
@@ -552,4 +553,42 @@ export async function buildEvidenceBundle(
 
   redactedBundle.estimatedInputTokens = estimateInputTokens(redactedBundle);
   return redactedBundle;
+}
+
+/**
+ * The sentence shown to the tester before a request is sent, naming the cost.
+ *
+ * WHAT: turns an evidence bundle into one plain sentence about what it will
+ * cost to send, in tokens and in what the tokens are made of.
+ * WHY it is here and not in the review page: the review page is one caller. The
+ * side panel could send too, and the wording of a spending warning should not
+ * be duplicated - two copies drift, and the one that drifts is the one nobody
+ * is looking at.
+ */
+export function describeRequestCost(bundle: AIEvidenceBundle): string {
+  const tokenText: string = bundle.estimatedInputTokens.toLocaleString();
+  let videoText: string;
+  if (bundle.video.deliveryMode === "omitted") {
+    videoText = "no video";
+  } else if (bundle.video.deliveryMode === "key-frames") {
+    videoText = String(bundle.video.keyFrameBase64.length)
+      + " key frames instead of the video";
+  } else {
+    videoText = "a "
+      + String(Math.round(bundle.video.durationMs / 1000))
+      + "-second video";
+  }
+  return "This will send about " + tokenText
+    + " tokens of evidence, including " + videoText + ".";
+}
+
+/**
+ * True when the tester should be asked to confirm before this bundle is sent.
+ *
+ * WHY this is a separate function from the sentence: a caller in a context that
+ * cannot show a dialog - a service worker, say - still needs to know whether
+ * one was owed, so it can refuse rather than spend silently.
+ */
+export function requestNeedsCostConfirmation(bundle: AIEvidenceBundle): boolean {
+  return bundle.estimatedInputTokens > CONFIRM_ABOVE_ESTIMATED_TOKENS;
 }

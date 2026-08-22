@@ -375,3 +375,129 @@ async function initialiseOptions(): Promise<void> {
 initialiseOptions().catch(function onInitError(initError: unknown): void {
   apiKeyStatus.textContent = "Settings failed to load: " + String(initError);
 });
+
+// -----------------------------------------------------------------------------
+// Site access
+//
+// The extension ships with no page access at all. This section is how a tester
+// grants the sites they test, and how they take it back.
+// -----------------------------------------------------------------------------
+
+/**
+ * Turns whatever the tester typed into an origin pattern Chrome will accept.
+ *
+ * WHAT: "staging.example.com", "https://staging.example.com",
+ * "https://staging.example.com/login?x=1" all become
+ * "https://staging.example.com/*".
+ * WHY be this forgiving: the correct string has a scheme, a host, and a literal
+ * "/*" on the end, and nobody types that from memory. Rejecting a URL a tester
+ * pasted from their address bar would be a pointless obstacle.
+ *
+ * Returns null when there is no host to be found.
+ */
+export function toOriginPattern(typedText: string): string | null {
+  const trimmed: string = typedText.trim();
+  if (trimmed === "") {
+    return null;
+  }
+
+  let withScheme: string = trimmed;
+  if (!withScheme.startsWith("http://") && !withScheme.startsWith("https://")) {
+    withScheme = "https://" + withScheme;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(withScheme);
+  } catch (parseError: unknown) {
+    return null;
+  }
+
+  if (parsed.hostname === "") {
+    return null;
+  }
+
+  return parsed.protocol + "//" + parsed.hostname + "/*";
+}
+
+/** Redraws the list of granted origins, each with its own revoke button. */
+async function renderGrantedOrigins(): Promise<void> {
+  const list = document.getElementById("granted-origins") as HTMLUListElement;
+  const permissions: chrome.permissions.Permissions =
+    await chrome.permissions.getAll();
+  const origins: string[] = permissions.origins ?? [];
+
+  const pageOrigins: string[] = [];
+  for (const origin of origins) {
+    if (origin.indexOf("generativelanguage.googleapis.com") === -1) {
+      pageOrigins.push(origin);
+    }
+  }
+
+  list.textContent = "";
+
+  if (pageOrigins.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "empty";
+    empty.textContent = "No sites granted yet.";
+    list.appendChild(empty);
+    return;
+  }
+
+  for (const origin of pageOrigins) {
+    const row = document.createElement("li");
+    const label = document.createElement("span");
+    label.textContent = origin;
+    const revoke = document.createElement("button");
+    revoke.type = "button";
+    revoke.className = "secondary";
+    revoke.textContent = "Revoke";
+    revoke.addEventListener("click", function onRevoke(): void {
+      void chrome.permissions
+        .remove({ origins: [origin] })
+        .then(function afterRemove(): Promise<void> {
+          return renderGrantedOrigins();
+        });
+    });
+    row.appendChild(label);
+    row.appendChild(revoke);
+    list.appendChild(row);
+  }
+}
+
+/** Wires the grant button and draws the initial list. */
+function installSiteAccessSection(): void {
+  const input = document.getElementById("origin-input") as HTMLInputElement;
+  const button = document.getElementById("grant-origin-button") as HTMLButtonElement;
+  const status = document.getElementById("origin-status") as HTMLParagraphElement;
+
+  button.addEventListener("click", function onGrant(): void {
+    const pattern: string | null = toOriginPattern(input.value);
+    if (pattern === null) {
+      status.textContent =
+        "That does not look like a site address. Try https://staging.example.com";
+      return;
+    }
+
+    // chrome.permissions.request must be called from a user gesture, which is
+    // why this lives in a click handler and not in a saved-settings routine.
+    chrome.permissions.request({ origins: [pattern] }).then(
+      function afterRequest(granted: boolean): void {
+        if (granted) {
+          status.textContent = "Granted " + pattern;
+          input.value = "";
+        } else {
+          status.textContent = "Not granted. " + pattern + " was left alone.";
+        }
+        void renderGrantedOrigins();
+      },
+      function onRequestError(requestError: unknown): void {
+        status.textContent = "Could not ask for that site: " + String(requestError);
+      },
+    );
+  });
+
+  void renderGrantedOrigins();
+}
+
+installSiteAccessSection();

@@ -33,6 +33,10 @@ import {
   type ActiveRecordingState,
 } from "./session-state";
 import {
+  injectIntoTabForThisSession,
+  isTabOriginGranted,
+} from "./content-script-registration";
+import {
   ensureOffscreenDocument,
   closeOffscreenDocument,
 } from "./offscreen-manager";
@@ -336,6 +340,20 @@ async function handleStartRecording(
 
   const tab: chrome.tabs.Tab = await chrome.tabs.get(tabId);
   const settings = await readSettings();
+
+  // If the tester has not granted this origin, the content scripts were never
+  // registered for it, so nothing would be recorded but the video. activeTab
+  // covers exactly this tab, because the tester just invoked us on it.
+  //
+  // The cost of the fallback is stated in injectIntoTabForThisSession: the
+  // fetch patch lands late, so requests the page made before Record was
+  // pressed are not seen. Granting the origin removes that gap.
+  const originGranted: boolean = await isTabOriginGranted(tab.url ?? "");
+  if (!originGranted) {
+    logInfo("worker", "Origin not granted; injecting under activeTab instead.");
+    await injectIntoTabForThisSession(tabId);
+  }
+
   const sessionId: string = createId();
   const startedAtMs: number = Date.now();
 

@@ -15,7 +15,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import {
   launchWithExtension, callExtension, readStore, openExtensionPage, waitFor,
-  readRecordingState, sendBrowserShortcut,
+  readRecordingState, sendBrowserShortcut, grantOriginLikeATester,
 } from "./harness.mjs";
 import { startFixtureServer } from "./fixture-server.mjs";
 
@@ -36,6 +36,13 @@ before(async () => {
   browser = await launchWithExtension();
   extensionPage = await openExtensionPage(browser.context, browser.extensionId,
     "options/options.html");
+  // The extension ships with NO page access - <all_urls> is optional, and the
+  // content scripts are registered at run time for granted origins only. So a
+  // test grants first, through the real options-page flow, exactly as a tester
+  // would. Without this the session records a video and zero events.
+  const granted = await grantOriginLikeATester(extensionPage, server.url);
+  assert.ok(granted, "the fixture origin was not granted; is a window manager running?");
+
 });
 
 after(async () => {
