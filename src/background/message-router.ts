@@ -152,6 +152,36 @@ async function notifyTabOfRecordingState(
 }
 
 /**
+ * Serialises the handlers that read-modify-write session state.
+ *
+ * WHY this is necessary: chrome.runtime.onMessage delivers concurrently, and
+ * every capture handler follows a read-modify-write cycle on the same session
+ * counter. Two events arriving in the same tick both read the same eventCount,
+ * both claim the same index, and the events store - keyed on
+ * [sessionId, index] - keeps only the last writer. A recorded step disappears
+ * with nothing logged.
+ *
+ * That is not a rare interleaving. "Type a value, press Enter" produces exactly
+ * this pair, and it is the single most common thing a tester does.
+ *
+ * A promise chain is the whole fix: each handler waits for the previous one to
+ * finish before reading. The chain lives for the worker's lifetime, and after a
+ * worker restart the next handler re-reads state from storage anyway, so
+ * termination cannot corrupt it.
+ */
+let stateMutationChain: Promise<unknown> = Promise.resolve();
+
+export function withSerialisedState<T>(work: () => Promise<T>): Promise<T> {
+  const runNext: Promise<T> = stateMutationChain.then(work, work);
+  // Swallow rejection on the CHAIN only: the caller still sees its own error,
+  // but one failed handler must not poison every handler after it.
+  stateMutationChain = runNext.catch(function absorb(): void {
+    return undefined;
+  });
+  return runNext;
+}
+
+/**
  * Broadcasts at most a few times a second.
  *
  * WHY: every recorded click would otherwise trigger a status broadcast, and
@@ -888,7 +918,9 @@ async function routeMessage(
       return { ok: true };
 
     case "ui/add-tester-note":
-      await handleTesterNote(message.text);
+      await withSerialisedState(function runTesterNote(): Promise<void> {
+        return handleTesterNote(message.text);
+      });
       return { ok: true };
 
     case "ui/open-review-page":
@@ -904,24 +936,37 @@ async function routeMessage(
       return reply;
     }
 
+    // Every case below mutates the shared session counters, so they run one at
+    // a time. Without this, two events arriving in the same tick claim the same
+    // index and one is silently overwritten.
     case "content/recorded-event":
-      await handleRecordedEvent(message.event, sender);
+      await withSerialisedState(function runRecordedEvent(): Promise<void> {
+        return handleRecordedEvent(message.event, sender);
+      });
       return { ok: true };
 
     case "content/dom-snapshot":
-      await handleDomSnapshot(message.snapshot);
+      await withSerialisedState(function runDomSnapshot(): Promise<void> {
+        return handleDomSnapshot(message.snapshot);
+      });
       return { ok: true };
 
     case "content/element-context":
-      await handleElementContext(message.context);
+      await withSerialisedState(function runElementContext(): Promise<void> {
+        return handleElementContext(message.context);
+      });
       return { ok: true };
 
     case "content/network-entry":
-      await handleNetworkEntry(message.entry);
+      await withSerialisedState(function runNetworkEntry(): Promise<void> {
+        return handleNetworkEntry(message.entry);
+      });
       return { ok: true };
 
     case "content/console-entry":
-      await handleConsoleEntry(message.entry);
+      await withSerialisedState(function runConsoleEntry(): Promise<void> {
+        return handleConsoleEntry(message.entry);
+      });
       return { ok: true };
 
     case "content/frame-inventory":

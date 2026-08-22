@@ -437,3 +437,62 @@ test("the prompt tells the model not to escape quotes in human-readable text", (
   assert.ok(api.SYSTEM_INSTRUCTION.includes("Do NOT add backslashes"));
   assert.ok(api.SYSTEM_INSTRUCTION.includes("for a HUMAN to read"));
 });
+
+// --- The lost-update race ---------------------------------------------------
+
+test("a serialised chain preserves order and loses nothing under concurrency", async () => {
+  // Models the exact failure the E2E suite caught: concurrent handlers that
+  // read a counter, await, then write it back. Without serialisation two of
+  // them claim the same index and one write is silently overwritten.
+  let counter = 0;
+  const written = [];
+
+  async function unsafeHandler(label) {
+    const readValue = counter;                 // read
+    await new Promise((r) => setTimeout(r, 5)); // await, as a real DB write does
+    written.push({ label, index: readValue });
+    counter = readValue + 1;                    // write
+  }
+
+  // Unserialised: indexes collide.
+  await Promise.all(["a", "b", "c", "d"].map(unsafeHandler));
+  const collided = new Set(written.map((w) => w.index)).size < written.length;
+  assert.ok(collided,
+    "the unsafe version should collide - if it does not, this test is not "
+      + "modelling the real failure");
+
+  // Serialised with the same chain shape the router uses.
+  counter = 0;
+  written.length = 0;
+  let chain = Promise.resolve();
+  const runSerialised = (work) => {
+    const next = chain.then(work, work);
+    chain = next.catch(() => undefined);
+    return next;
+  };
+
+  await Promise.all(["a", "b", "c", "d"].map(
+    (label) => runSerialised(() => unsafeHandler(label))));
+
+  const indexes = written.map((w) => w.index);
+  assert.deepEqual(indexes, [0, 1, 2, 3], "serialised handlers must not collide");
+  assert.equal(new Set(indexes).size, 4, "an index was reused");
+});
+
+test("one failing handler does not poison the ones behind it", async () => {
+  let chain = Promise.resolve();
+  const runSerialised = (work) => {
+    const next = chain.then(work, work);
+    chain = next.catch(() => undefined);
+    return next;
+  };
+
+  const completed = [];
+  const first = runSerialised(async () => { throw new Error("boom"); });
+  const second = runSerialised(async () => { completed.push("second"); });
+
+  await assert.rejects(first, /boom/);
+  await second;
+  assert.deepEqual(completed, ["second"],
+    "a rejected handler must not block the queue behind it");
+});

@@ -250,3 +250,43 @@ test("a global regex does not skip matches on the second string it sees", () => 
   assert.ok(!first.includes("@"), "first string not fully redacted");
   assert.ok(!second.includes("@"), "second string not fully redacted - lastIndex bug");
 });
+
+// --- Secrets written as labelled page text ----------------------------------
+
+test("a credential printed as page text is redacted, but its label survives", () => {
+  // Found on the real OrangeHRM demo site, which advertises its own login on
+  // the page: "Username : Admin  Password : admin123". Staging environments do
+  // this constantly with "test credentials" banners.
+  const counter = {};
+  const result = api.redactValuePatterns(
+    "<p>Username : Admin</p><p>Password : admin123</p>", counter, []);
+
+  assert.ok(!result.includes("admin123"), "the printed password survived");
+  assert.ok(result.includes("Password :"),
+    "the label must survive - knowing a password was on screen is evidence, "
+      + "knowing what it was is a liability");
+  assert.ok(result.includes("[REDACTED:labelled-secret]"));
+  assert.ok(result.includes("Admin"),
+    "a username is not a secret and must not be over-redacted");
+});
+
+test("labelled-secret matching covers the common spellings", () => {
+  const cases = [
+    "password: hunter2xyz", "Passwd = s3cr3tval", "PWD:abc12345",
+    "API key = AK12345678", "auth_token: zzzz9999", "OTP: 483920",
+  ];
+  for (const text of cases) {
+    const counter = {};
+    const result = api.redactValuePatterns(text, counter, []);
+    assert.ok(result.includes("[REDACTED:labelled-secret]"),
+      `not redacted: ${text} -> ${result}`);
+  }
+});
+
+test("ordinary prose containing the word password is not mangled", () => {
+  const counter = {};
+  const text = "The password field is required and must be 8 characters.";
+  const result = api.redactValuePatterns(text, counter, []);
+  assert.equal(result, text,
+    "a sentence with no colon or equals must not trigger the rule");
+});

@@ -10,6 +10,7 @@ import { readActiveState, writeActiveState, videoOffsetForState }
   from "./session-state";
 import { appendEvent } from "../storage/events";
 import { recordEventProgress } from "../storage/sessions";
+import { withSerialisedState } from "./message-router";
 import { logWarning } from "../shared/logger";
 
 /**
@@ -216,19 +217,26 @@ export function installNavigationListeners(): void {
         return;   // Subframe loads are not journey steps.
       }
       const isReload: boolean = details.transitionType === "reload";
-      void recordNavigationEvent(
-        isReload ? "reload" : "navigate",
-        details.url,
-        "",
-        details.tabId,
-        details.frameId,
-      );
+      // Serialised with the capture handlers: a navigation landing in the same
+      // tick as a click would otherwise claim the same event index and one of
+      // the two would be silently overwritten.
+      void withSerialisedState(function runNavigation(): Promise<void> {
+        return recordNavigationEvent(
+          isReload ? "reload" : "navigate",
+          details.url,
+          "",
+          details.tabId,
+          details.frameId,
+        );
+      });
     },
   );
 
   chrome.tabs.onActivated.addListener(
     function onActivated(activeInfo: chrome.tabs.TabActiveInfo): void {
-      void handleTabActivated(activeInfo.tabId);
+      void withSerialisedState(function runTabActivated(): Promise<void> {
+        return handleTabActivated(activeInfo.tabId);
+      });
     },
   );
 }

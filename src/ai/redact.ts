@@ -28,10 +28,17 @@ import type {
   PageMeta,
 } from "../shared/types";
 
-/** One named redaction rule. Named so the marker tells the model what was hidden. */
+/**
+ * One named redaction rule. Named so the marker tells the model what was hidden.
+ *
+ * `keepLabel` is for rules that match "<label>: <secret>" and must preserve the
+ * label. Knowing that a password was on screen is useful evidence; knowing what
+ * it was is a liability.
+ */
 interface RedactionRule {
   name: string;
   pattern: RegExp;
+  keepLabel?: boolean;
 }
 
 /**
@@ -75,6 +82,14 @@ const SENSITIVE_VALUE_PATTERNS: readonly RedactionRule[] = [
   { name: "national-id", pattern: /\b[12]\d{9}\b/g },
   // Email addresses. Debatable in general; staging data is often real.
   { name: "email", pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g },
+  // A secret written out as labelled text, which is how staging environments
+  // advertise their own test credentials: "Password : admin123", "API key = ...".
+  // The label is kept; only the value after it is removed.
+  {
+    name: "labelled-secret",
+    keepLabel: true,
+    pattern: /\b(pass(?:word|wd|code)?|pwd|secret|api[ _-]?key|auth[ _-]?token|token|otp|pin)\b(\s*[:=]\s*)([^\s<>"'`,;]{3,64})/gi,
+  },
 ];
 
 /** Attributes in captured HTML whose values must be scrubbed. */
@@ -150,6 +165,22 @@ export function redactValuePatterns(
     // Fresh RegExp each time: /g patterns carry lastIndex state between calls,
     // which silently skips matches on the second string you pass in.
     const pattern: RegExp = new RegExp(rule.pattern.source, rule.pattern.flags);
+
+    if (rule.keepLabel === true) {
+      result = result.replace(
+        pattern,
+        function onLabelledMatch(
+          _whole: string,
+          label: string,
+          separator: string,
+        ): string {
+          countRedaction(counter, rule.name);
+          return label + separator + "[REDACTED:" + rule.name + "]";
+        },
+      );
+      continue;
+    }
+
     result = result.replace(pattern, function onMatch(): string {
       countRedaction(counter, rule.name);
       return "[REDACTED:" + rule.name + "]";
