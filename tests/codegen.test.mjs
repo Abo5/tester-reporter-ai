@@ -670,3 +670,76 @@ test("a recorded key combination replays through page.keyboard.press", () => {
   assert.ok(spec.includes("browser chrome, not part of the page"),
     "the honest warning did not reach the spec");
 });
+
+// -----------------------------------------------------------------------------
+// A scoped row locator must never carry an absolute path
+//
+// A real session on OrangeHRM generated this for a delete button in a table:
+//
+//   page.getByRole('row').filter({hasText:'X'}).locator('xpath=/html/body/...')
+//
+// It matches ZERO elements. Playwright evaluates the XPath from the scope
+// element, and a path starting at /html finds nothing inside a row. Measured in
+// a real browser, not reasoned about. Two steps of that script would have timed
+// out on replay while reading as perfectly plausible code.
+// -----------------------------------------------------------------------------
+
+test("a css-path is cut at the row boundary so the scope still works", () => {
+  const relative = api.makePathRelativeToRow({
+    strategy: "css-path",
+    value: 'div[role="rowgroup"] > div:nth-of-type(27) > div[role="row"] > div[role="cell"] > div > button[type="button"]',
+    matchCount: 2,
+  }, "row");
+
+  assert.equal(relative, 'div[role="cell"] > div > button[type="button"]',
+    "the part after the row is what can be scoped to the row");
+});
+
+test("an xpath is never cut, because half-parsing one is worse than not trying", () => {
+  const relative = api.makePathRelativeToRow({
+    strategy: "xpath",
+    value: "/html/body/div/div[1]/div[2]/div[27]/div/div[4]/div/button[1]",
+    matchCount: 1,
+  }, "row");
+
+  assert.equal(relative, "",
+    "an empty result is the signal to fall back to the unscoped path");
+});
+
+test("no generated locator ever chains an absolute path under a scope", () => {
+  const events = buildWorkedExampleTrace();
+  const inRow = { ...events[events.length - 1] };
+  inRow.index = events.length;
+  inRow.type = "click";
+  inRow.locator = {
+    strategy: "xpath",
+    primary: { strategy: "xpath", value: "/html/body/div/div[27]/button[1]", matchCount: 1 },
+    fallbacks: [{
+      strategy: "css-path",
+      value: 'div[role="rowgroup"] > div:nth-of-type(27) > div[role="row"] > div[role="cell"] > button',
+      matchCount: 2,
+    }],
+    framePath: [],
+    isInShadowDom: false,
+    isClosedShadowHost: false,
+    shadowHostSelectors: [],
+    isInsideRepeatedList: true,
+    listRowRole: "row",
+    listRowAnchorText: "TRA-e2e-1",
+    ariaRole: "",
+    accessibleName: "",
+    visibleText: "",
+    warnings: [],
+  };
+
+  const spec = api.generatePlaywrightSpec(SESSION, [...events, inRow], []);
+
+  // The row scope survives...
+  assert.ok(spec.includes(".filter({ hasText: 'TRA-e2e-1' })"),
+    `the row scope was lost:\n${spec}`);
+  // ...and what follows it is relative, never document-rooted.
+  assert.ok(!/filter\(\{ hasText: [^)]*\}\)\.locator\('xpath=\//.test(spec),
+    `an absolute xpath was chained under a scope, which matches nothing:\n${spec}`);
+  assert.ok(!/filter\(\{ hasText: [^)]*\}\)\.locator\('\/html/.test(spec),
+    `an absolute path was chained under a scope:\n${spec}`);
+});

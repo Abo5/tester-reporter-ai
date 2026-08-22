@@ -7877,6 +7877,40 @@ never a literal in a step.
 
 ---
 
+### 19.q A dead locator that read as good code
+
+Running the reported journey on the real application produced a script whose
+step 7 was this:
+
+```ts
+await page.getByRole('row').filter({ hasText: 'TRA-e2e-181057' })
+  .locator('xpath=/html/body/div/div[1]/div[2]/.../button[1]').click();
+```
+
+It matches **zero elements**. Measured in a browser rather than reasoned about:
+Playwright evaluates a chained XPath from the scope element, and a path starting
+at `/html` finds nothing inside a table row. Two steps of that script would have
+timed out on replay, and nothing about them looks wrong — the row filter is the
+good, resilient half of the locator, and it is sitting right there.
+
+This is worse than the fragile locators the generator already warns about. A
+fragile locator can match the wrong thing; this one can never match anything.
+
+The fix keeps the scope, which is the half worth keeping, and cuts the *css-path*
+at the row boundary to get a selector that is relative to it:
+
+```ts
+await page.getByRole('row').filter({ hasText: '...' })
+  .locator('div[role="cell"] > div > button[type="button"]').click();
+```
+
+XPath is deliberately not cut. Doing it correctly needs an XPath parser, and a
+half-parsed one produces a selector that is wrong in ways nobody notices until
+replay — so when no css-path is available the generator falls back to the
+unscoped path and loses the scope honestly.
+
+---
+
 ## 20. Browser verification — what running it actually proved
 
 Section 19.2 said the media path and the Chrome APIs were "still theory". They are not

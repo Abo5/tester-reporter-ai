@@ -225,3 +225,150 @@ test("records a real login journey on OrangeHRM without leaking the password",
 
   await page.close();
 });
+
+test("the add-then-find-then-delete journey the tester actually ran", async (t) => {
+  // THE REPORTED SCENARIO, on the real application.
+  //
+  // The tester added a record, pressed Ctrl+F to find it, and deleted it. The
+  // session captured almost none of that: the key press was dropped because
+  // only Enter/Tab/Escape were recorded, and everything after the first
+  // navigation was lost because the ungranted fallback died with the document.
+  //
+  // Both are fixed. This proves it on the application it was reported against,
+  // through a modal confirmation dialog - which no fixture in this repo has.
+  if (!siteReachable) {
+    t.skip("site unreachable");
+    return;
+  }
+
+  const page = await browser.context.newPage();
+  // The previous test already signed in on this browser context, so
+  // /auth/login redirects straight to the dashboard and the form never appears.
+  // Log in only if we are actually shown the form.
+  await page.goto(`${SITE}/web/index.php/auth/login`, {
+    waitUntil: "domcontentloaded",
+    timeout: 60000,
+  });
+  await page.waitForTimeout(2000);
+
+  const needsLogin = await page.locator('input[name="username"]').count() > 0;
+  if (needsLogin) {
+    await page.fill('input[name="username"]', DEMO_USER);
+    await page.fill('input[name="password"]', DEMO_PASSWORD);
+    await page.click('button[type="submit"]');
+  }
+  await page.waitForURL(/dashboard/, { timeout: 40000 });
+  await page.bringToFront();
+
+  const tabId = await browser.serviceWorker.evaluate(async () => {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    return tabs[0]?.id ?? -1;
+  });
+
+  await callExtension(extensionPage, {
+    kind: "ui/start-recording", tabId, captureMicrophone: false,
+  });
+  await waitFor("session to reach 'recording'", async () => {
+    const state = await readRecordingState(browser.serviceWorker);
+    return state?.status === "recording";
+  });
+  await page.bringToFront();
+
+  // A unique name, so the row this test deletes is unambiguously its own and
+  // never someone else's data on a shared demo instance.
+  const jobTitle = `TRA-e2e-${process.env.TRA_RUN_STAMP ?? "local"}`;
+
+  // --- Navigate INTO the admin area. This is the step that used to kill the
+  // --- session on the ungranted path.
+  await page.goto(`${SITE}/web/index.php/admin/saveJobTitle`,
+    { waitUntil: "networkidle" });
+  await page.waitForTimeout(1500);
+
+  // By label group and by button name, not by tag and type. `button[type=
+  // "submit"]` matched the wrong control here and the record was never created,
+  // which made an earlier version of this test pass while proving nothing.
+  const jobTitleInput = page
+    .locator('.oxd-input-group', { hasText: 'Job Title' })
+    .locator('input')
+    .first();
+  await jobTitleInput.fill(jobTitle);
+  await page.getByRole("button", { name: /^Save$/ }).click();
+  await page.waitForURL(/viewJobTitleList/, { timeout: 40000 });
+  await page.waitForTimeout(2500);
+
+  // --- Ctrl+F, exactly as the tester pressed it.
+  await page.keyboard.press("Control+f");
+  await page.waitForTimeout(600);
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(400);
+
+  // --- Delete it, through the confirmation modal.
+  const row = page.locator('.oxd-table-card', { hasText: jobTitle }).first();
+  assert.ok(await row.count() > 0,
+    `the record "${jobTitle}" was never created, so there is nothing to delete`);
+
+  await row.locator("button").first().click();      // the trash icon
+  await page.waitForTimeout(1500);
+
+  const confirm = page.getByRole("button", { name: /Yes, Delete/i }).first();
+  assert.ok(await confirm.count() > 0,
+    "the delete confirmation dialog did not appear");
+  await confirm.click();
+  await page.waitForTimeout(3000);
+  const deleted = true;
+
+  assert.equal(
+    await page.locator('.oxd-table-card', { hasText: jobTitle }).count(), 0,
+    "the row is still there after confirming the delete");
+
+  await callExtension(extensionPage, { kind: "ui/stop-recording" });
+  // The NEWEST session, not the first one in the store. The previous test in
+  // this file recorded its own session in the same browser profile, and picking
+  // sessions[0] read that one instead - which passed the key-press assertion
+  // (the events store holds every session's events) while asserting against a
+  // script generated from a different recording entirely.
+  const session = await waitFor("session to finish", async () => {
+    const sessions = await readStore(extensionPage, "sessions");
+    const finished = sessions.filter((s) => s.status !== "processing"
+      && s.status !== "recording");
+    if (finished.length === 0) {
+      return null;
+    }
+    finished.sort((a, b) => b.startedAtMs - a.startedAtMs);
+    return finished[0];
+  }, 60000);
+
+  const allEvents = await readStore(extensionPage, "events");
+  const events = allEvents.filter((e) => e.sessionId === session.id);
+  const shape = {};
+  for (const event of events) { shape[event.type] = (shape[event.type] || 0) + 1; }
+  const keys = events.filter((e) => e.type === "press-key").map((e) => e.value);
+
+  console.log(`  event shape: ${JSON.stringify(shape)}`);
+  console.log(`  key presses: ${JSON.stringify(keys)}`);
+  console.log(`  reached the delete confirmation: ${deleted}`);
+
+  // 1. Ctrl+F reached the recording.
+  assert.ok(keys.includes("Control+f"),
+    `Ctrl+F was not captured. Keys: ${JSON.stringify(keys)}`);
+
+  // 2. Interactions were captured AFTER the navigation into the admin area,
+  //    which is the failure the tester saw.
+  const afterAdminNav = events.filter((event) =>
+    event.pageUrl.includes("/admin/")
+    && (event.type === "click" || event.type === "input"
+        || event.type === "press-key"));
+  assert.ok(afterAdminNav.length >= 3,
+    `only ${afterAdminNav.length} interactions after navigating into /admin/; `
+    + "the session stopped capturing after the navigation");
+
+  // 3. The generated script names them.
+  assert.ok(session.playwrightScript.includes("Control+f"),
+    "the key press did not reach the generated script");
+  assert.ok(session.playwrightScript.includes("await pause();"),
+    "the generated script has no pause between steps");
+
+  console.log(`\n--- generated script ---\n${session.playwrightScript}`);
+
+  await page.close();
+});

@@ -63,6 +63,7 @@ export {
   buildLocatorComments,
   quote,
   escapeForSingleQuotedString,
+  makePathRelativeToRow,
 } from "../src/codegen/locator-to-playwright";
 export { buildClosingAssertions, findFailureAfterEvent }
   from "../src/codegen/assertions";

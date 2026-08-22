@@ -161,6 +161,58 @@ function candidateToExpression(candidate: LocatorCandidate): string {
   return ".locator(" + quote(candidate.value) + ")";
 }
 
+
+/**
+ * Turns a document-rooted path into one that works INSIDE the row scope.
+ *
+ * WHAT: given "div[role=\"rowgroup\"] > div:nth-of-type(27) > div[role=\"row\"]
+ * > div[role=\"cell\"] > div > button" and the row role "row", returns
+ * "div[role=\"cell\"] > div > button" - the part after the row.
+ *
+ * WHY it is worth deriving rather than giving up: the row scope is the good
+ * half of the locator. It survives the table being re-sorted or a row being
+ * added above, which is exactly what an absolute path does not. Keeping the
+ * scope and cutting the path at the row boundary keeps that.
+ *
+ * Returns "" when the boundary cannot be found, which is the signal to fall
+ * back to the unscoped path rather than emit something that matches nothing.
+ * Only css-path is handled: cutting an XPath correctly needs an XPath parser,
+ * and half-parsing one would produce a selector that is wrong in ways nobody
+ * would notice until replay.
+ */
+export function makePathRelativeToRow(
+  candidate: LocatorCandidate,
+  rowRole: string,
+): string {
+  if (candidate.strategy !== "css-path") {
+    return "";
+  }
+  if (rowRole === "") {
+    return "";
+  }
+
+  const segments: string[] = candidate.value.split(">");
+  const rowMarker: string = '[role="' + rowRole + '"]';
+
+  let rowIndex: number = -1;
+  for (let index = 0; index < segments.length; index = index + 1) {
+    if (segments[index].indexOf(rowMarker) !== -1) {
+      rowIndex = index;
+    }
+  }
+
+  if (rowIndex === -1 || rowIndex === segments.length - 1) {
+    return "";
+  }
+
+  const tail: string[] = [];
+  for (let index = rowIndex + 1; index < segments.length; index = index + 1) {
+    tail.push(segments[index].trim());
+  }
+
+  return tail.join(" > ");
+}
+
 /**
  * Builds the complete locator expression, including frames and list scoping.
  *
@@ -210,7 +262,32 @@ export function locatorToPlaywrightExpression(locator: ElementLocator): string {
     if (locator.visibleText !== "") {
       return rowExpression + ".getByText(" + quote(locator.visibleText) + ", { exact: true })";
     }
-    return rowExpression + candidateToExpression(locator.primary);
+
+    // An absolute path CANNOT be chained under a scope.
+    //
+    // Measured, because it looks harmless: a locator of the form
+    //   page.getByRole('row').filter({hasText:'X'}).locator('xpath=/html/body/...')
+    // matches ZERO elements. Playwright evaluates the XPath from the scope
+    // element, and a path starting at /html finds nothing there. A real session
+    // generated exactly this for a delete button inside a table row, and both
+    // steps would have timed out on replay while looking perfectly plausible.
+    //
+    // The same is true of a css-path rooted at the document.
+    // The primary is often the xpath, with the css-path sitting in the
+    // fallbacks - and only the css-path can be cut at the row boundary. Look
+    // through both rather than giving up on the primary alone.
+    const candidates: LocatorCandidate[] = [locator.primary].concat(locator.fallbacks);
+    for (let index = 0; index < candidates.length; index = index + 1) {
+      const relativeInsideRow: string = makePathRelativeToRow(
+        candidates[index], locator.listRowRole);
+      if (relativeInsideRow !== "") {
+        return rowExpression + ".locator(" + quote(relativeInsideRow) + ")";
+      }
+    }
+
+    // Nothing derivable. The unscoped path on its own is fragile, but a fragile
+    // locator that can match beats a tidy one that never can.
+    return frameChain + candidateToExpression(locator.primary);
   }
 
   return frameChain + candidateToExpression(locator.primary);
