@@ -16,7 +16,8 @@ export { getElementSelector, isInsideRepeatedList, looksLikeGeneratedIdentifier 
 export { getAriaRole, getAccessibleName, getVisibleText, getAssociatedLabelText }
   from "../src/capture/accessible-name";
 export { captureElementContext } from "../src/capture/element-context";
-export { isElementHidden, isElementInteractive } from "../src/capture/visibility";
+export { isElementHidden, isElementInteractive, resolveInteractiveTarget }
+  from "../src/capture/visibility";
 
 export {
   redactSensitiveData,

@@ -335,7 +335,13 @@ export function serialiseNode(
 
   const element: Element = node as Element;
 
-  if (DROPPED_TAGS.includes(element.tagName)) {
+  // SVG and MathML elements report a LOWER-CASE tagName, unlike HTML elements,
+  // so comparing against the upper-case tables below silently let entire icon
+  // subtrees through. A page with fifty icons emitted several hundred empty
+  // tags for no benefit.
+  const upperTagName: string = element.tagName.toUpperCase();
+
+  if (DROPPED_TAGS.includes(upperTagName)) {
     state.droppedElementCount = state.droppedElementCount + 1;
     return;
   }
@@ -366,11 +372,11 @@ export function serialiseNode(
 
   appendOutput(state, "<" + tagName + attributeString + ">", options);
 
-  if (VOID_TAGS.includes(element.tagName)) {
+  if (VOID_TAGS.includes(upperTagName)) {
     return;
   }
 
-  if (NON_RECURSED_TAGS.includes(element.tagName)) {
+  if (NON_RECURSED_TAGS.includes(upperTagName)) {
     appendOutput(state, "</" + tagName + ">", options);
     return;
   }

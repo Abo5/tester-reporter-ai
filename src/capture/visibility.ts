@@ -88,3 +88,37 @@ export function isElementInteractive(element: Element): boolean {
   }
   return false;
 }
+
+/** How far up to look for the control a decorative child belongs to. */
+const MAX_INTERACTIVE_ANCESTOR_DEPTH: number = 4;
+
+/**
+ * Resolves the element the tester meant to click.
+ *
+ * A click on the <path> of an icon button, or the <span> inside a link, has an
+ * event target that is decorative: it has no role, no accessible name and no
+ * test id, so the locator chain falls all the way through to a bare CSS path
+ * like `path` or `span`. The control one level up usually has all three.
+ *
+ * Only non-interactive elements are retargeted, and only up to a few levels, so
+ * a real click on a nested control - a button inside a table cell - is left
+ * exactly where it landed.
+ */
+export function resolveInteractiveTarget(element: Element): Element {
+  if (isElementInteractive(element)) {
+    return element;
+  }
+
+  let candidate: Element | null = element.parentElement;
+  let depth: number = 0;
+
+  while (candidate !== null && depth < MAX_INTERACTIVE_ANCESTOR_DEPTH) {
+    if (isElementInteractive(candidate)) {
+      return candidate;
+    }
+    candidate = candidate.parentElement;
+    depth = depth + 1;
+  }
+
+  return element;
+}

@@ -253,3 +253,67 @@ test("an xpath candidate reports the match count it actually has", async () => {
   assert.equal(xpath.isUniqueAtCaptureTime, xpath.matchCount === 1,
     "uniqueness must follow from the measured count, not be asserted");
 });
+
+test("a click on an icon inside a button resolves to the button", async () => {
+  // Icon buttons are in essentially every modern application, and the pixel the
+  // tester hits belongs to a decorative child with no role, no accessible name
+  // and no test id. Recording that child produced .locator('path'), which is
+  // useless, while the button beside it had all three.
+  installDom(`<html><body>
+    <button aria-label="Delete row" data-testid="delete-btn">
+      <svg viewBox="0 0 24 24"><path d="M3 6h18"></path></svg>
+    </button>
+    <a href="/next"><span class="label">Continue</span></a>
+    <div><p>just text</p></div>
+  </body></html>`);
+  const api = await import("../dist-test/test-api.mjs");
+
+  const iconPath = document.querySelector("path");
+  const resolvedButton = api.resolveInteractiveTarget(iconPath);
+  assert.equal(resolvedButton.tagName, "BUTTON",
+    "the icon click should resolve to the button that owns it");
+
+  const locator = api.getElementSelector(resolvedButton);
+  assert.equal(locator.strategy, "test-id");
+  assert.equal(locator.primary.value, '[data-testid="delete-btn"]');
+
+  const linkSpan = document.querySelector("span.label");
+  assert.equal(api.resolveInteractiveTarget(linkSpan).tagName, "A",
+    "text inside a link should resolve to the link");
+});
+
+test("a click on genuinely non-interactive content is NOT retargeted", async () => {
+  installDom(`<html><body><div><p id="plain">just text</p></div></body></html>`);
+  const api = await import("../dist-test/test-api.mjs");
+
+  const paragraph = document.getElementById("plain");
+  assert.equal(api.resolveInteractiveTarget(paragraph).id, "plain",
+    "there is no control above this, so it must be left where it landed");
+});
+
+test("a control nested inside another control is left alone", async () => {
+  installDom(`<html><body>
+    <div role="row"><button data-testid="inner">Open</button></div>
+  </body></html>`);
+  const api = await import("../dist-test/test-api.mjs");
+
+  const button = document.querySelector("button");
+  assert.equal(api.resolveInteractiveTarget(button).tagName, "BUTTON",
+    "an element that is itself interactive must never be retargeted upward");
+});
+
+test("the pruner does not descend into SVG icon subtrees", async () => {
+  installDom(`<html><body>
+    <button><svg viewBox="0 0 24 24"><path d="M3 6h18"></path><circle cx="1"/></svg></button>
+  </body></html>`);
+  const api = await import("../dist-test/test-api.mjs");
+  const result = api.pruneDomForAI(document, api.DEFAULT_PRUNE_OPTIONS);
+
+  // SVG elements report a LOWER-CASE tagName, so comparing against the
+  // upper-case tag tables silently let whole icon subtrees through.
+  assert.ok(!result.prunedHtml.includes("<path"),
+    "SVG children leaked into the snapshot");
+  assert.ok(!result.prunedHtml.includes("<circle"));
+  assert.ok(result.prunedHtml.includes("<svg"),
+    "the svg element itself should still be visible to the model");
+});

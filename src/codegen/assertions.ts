@@ -113,6 +113,7 @@ export function buildClosingAssertions(
 
   let lastInteraction: RecordedEvent | null = null;
   let finalUrl: string = "";
+  let navigatedAfterLastInteraction: boolean = false;
 
   for (let index = 0; index < events.length; index = index + 1) {
     const event: RecordedEvent = events[index];
@@ -121,7 +122,21 @@ export function buildClosingAssertions(
     }
     if (event.locator !== null) {
       lastInteraction = event;
+      navigatedAfterLastInteraction = false;
+      continue;
     }
+    // A navigation after the last interaction means that element belongs to the
+    // PREVIOUS page. Asserting it is visible would fail on a recording that
+    // worked perfectly - the worst kind of generated assertion, because it
+    // teaches the tester the tool is unreliable.
+    if (event.type === "navigate" || event.type === "url-change"
+        || event.type === "reload") {
+      navigatedAfterLastInteraction = true;
+    }
+  }
+
+  if (navigatedAfterLastInteraction) {
+    lastInteraction = null;
   }
 
   if (finalUrl !== "") {
@@ -132,6 +147,12 @@ export function buildClosingAssertions(
       && lastInteraction.locator.framePath.length === 0) {
     const expression: string = locatorToPlaywrightExpression(lastInteraction.locator);
     lines.push(indent + "await expect(" + expression + ").toBeVisible();");
+  }
+
+  if (navigatedAfterLastInteraction) {
+    lines.push(indent + "// The page navigated after the last interaction, so the "
+      + "element that was clicked belongs to the previous page and is not "
+      + "asserted on here.");
   }
 
   if (lines.length === 4) {

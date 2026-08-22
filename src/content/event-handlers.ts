@@ -16,6 +16,7 @@ import type {
   SnapshotTrigger,
 } from "../shared/types";
 import { getElementSelector } from "../capture/selector";
+import { resolveInteractiveTarget } from "../capture/visibility";
 import { captureElementContext } from "../capture/element-context";
 import { maybeTakeSnapshot } from "./snapshot-scheduler";
 import { sendMessageIgnoringNoReceiver } from "../shared/messages";
@@ -470,10 +471,13 @@ export function handleClick(nativeEvent: MouseEvent): void {
     return;
   }
 
-  const target: Element | null = getRealEventTarget(nativeEvent);
-  if (target === null) {
+  const rawTarget: Element | null = getRealEventTarget(nativeEvent);
+  if (rawTarget === null) {
     return;
   }
+  // The tester clicked the control; the pixel they hit may belong to an icon
+  // inside it.
+  const target: Element = resolveInteractiveTarget(rawTarget);
 
   // Chrome dispatches a synthetic click on the submit button when Enter is
   // pressed inside a form. Recording it as well as the key press makes the
@@ -508,10 +512,11 @@ export function handleDoubleClick(nativeEvent: MouseEvent): void {
   if (!isRecordingActive) {
     return;
   }
-  const target: Element | null = getRealEventTarget(nativeEvent);
-  if (target === null) {
+  const rawTarget: Element | null = getRealEventTarget(nativeEvent);
+  if (rawTarget === null) {
     return;
   }
+  const target: Element = resolveInteractiveTarget(rawTarget);
 
   const event: RecordedEvent = createBaseEvent("dblclick");
   event.locator = getElementSelector(target);
@@ -728,10 +733,11 @@ export function handleMouseOver(nativeEvent: MouseEvent): void {
     return;
   }
 
-  const target: Element | null = getRealEventTarget(nativeEvent);
-  if (target === null || document.body === null) {
+  const rawTarget: Element | null = getRealEventTarget(nativeEvent);
+  if (rawTarget === null || document.body === null) {
     return;
   }
+  const target: Element = resolveInteractiveTarget(rawTarget);
 
   // The pointer resting on something the tester just clicked is not a
   // discovery, it is where the mouse happens to be.

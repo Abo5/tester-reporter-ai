@@ -490,3 +490,77 @@ test("a url-change step does not delete the navigation that follows it", () => {
   assert.ok(spec.includes("goto('https://x.test/b')"),
     "the later navigation was silently deleted");
 });
+
+test("a newline in a fallback value cannot break out of its comment", () => {
+  // A multi-line button label put a real newline into a // comment, so
+  // everything after it became code and the spec failed to parse.
+  const locator = makeLocator({
+    strategy: "css-path",
+    primary: {
+      strategy: "css-path", value: "div > b", role: "",
+      matchCount: 1, isUniqueAtCaptureTime: true,
+    },
+    fallbacks: [{
+      strategy: "exact-text", value: "Save\nand continue", role: "",
+      matchCount: 2, isUniqueAtCaptureTime: false,
+    }],
+  });
+
+  for (const line of api.buildLocatorComments(locator)) {
+    assert.ok(!line.includes("\n"),
+      `a comment line contains a newline and would break the spec: ${line}`);
+    assert.ok(line.trimStart().startsWith("//"),
+      `a line escaped its comment: ${line}`);
+  }
+});
+
+test("a non-ARIA role is not emitted to getByRole, which would not typecheck", () => {
+  const locator = makeLocator({
+    primary: {
+      strategy: "role-and-name", value: "Save", role: "custom-widget",
+      matchCount: 1, isUniqueAtCaptureTime: true,
+    },
+    ariaRole: "custom-widget",
+    accessibleName: "Save",
+  });
+
+  const expression = api.locatorToPlaywrightExpression(locator);
+  assert.ok(!expression.includes("getByRole('custom-widget'"),
+    `getByRole takes a union of ARIA role names, so this would not compile: `
+      + expression);
+  assert.ok(expression.includes("getByText('Save'"),
+    `expected a fallback that names the element: ${expression}`);
+});
+
+test("a standard ARIA role still uses getByRole", () => {
+  const locator = makeLocator();   // role=tab
+  assert.ok(api.locatorToPlaywrightExpression(locator).includes("getByRole('tab'"));
+});
+
+test("no visibility assertion on an element the page navigated away from", () => {
+  // Asserting the clicked element is visible AFTER a navigation fails on a
+  // recording that worked perfectly, which teaches the tester the tool lies.
+  const events = [
+    makeEvent(1, "click", { wallClockMs: 1000, locator: makeLocator() }),
+    makeEvent(2, "navigate", { wallClockMs: 9000, pageUrl: "https://x.test/next" }),
+  ];
+
+  const spec = api.generatePlaywrightSpec(SESSION, events, []);
+
+  assert.ok(!spec.includes("toBeVisible()"),
+    "the element belongs to the previous page and must not be asserted on");
+  assert.ok(spec.includes("belongs to the previous page"),
+    "the spec should say why there is no element assertion");
+  assert.ok(spec.includes("toHaveURL('https://x.test/next')"),
+    "the final URL is still a legitimate assertion");
+});
+
+test("a visibility assertion IS emitted when nothing navigated afterwards", () => {
+  const events = [
+    makeEvent(1, "navigate", { wallClockMs: 500, pageUrl: "https://x.test/a" }),
+    makeEvent(2, "click", { wallClockMs: 1000, locator: makeLocator() }),
+  ];
+  const spec = api.generatePlaywrightSpec(SESSION, events, []);
+  assert.ok(spec.includes("toBeVisible()"),
+    "with no navigation after the click, the element is still on screen");
+});

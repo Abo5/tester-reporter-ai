@@ -11,6 +11,29 @@
 import type { ElementLocator, LocatorCandidate, FrameStep } from "../shared/types";
 
 /**
+ * The role names Playwright's getByRole() accepts.
+ *
+ * Its parameter is a union type, not a string, so emitting a role the page
+ * invented produces a spec that does not typecheck - red squiggles in the
+ * tester's editor before they have changed a thing.
+ */
+const ARIA_ROLES: readonly string[] = [
+  "alert", "alertdialog", "application", "article", "banner", "blockquote",
+  "button", "caption", "cell", "checkbox", "code", "columnheader", "combobox",
+  "complementary", "contentinfo", "definition", "deletion", "dialog",
+  "directory", "document", "emphasis", "feed", "figure", "form", "generic",
+  "grid", "gridcell", "group", "heading", "img", "insertion", "link", "list",
+  "listbox", "listitem", "log", "main", "marquee", "math", "menu", "menubar",
+  "menuitem", "menuitemcheckbox", "menuitemradio", "meter", "navigation",
+  "none", "note", "option", "paragraph", "presentation", "progressbar",
+  "radio", "radiogroup", "region", "row", "rowgroup", "rowheader",
+  "scrollbar", "search", "searchbox", "separator", "slider", "spinbutton",
+  "status", "strong", "subscript", "superscript", "switch", "tab", "table",
+  "tablist", "tabpanel", "term", "textbox", "time", "timer", "toolbar",
+  "tooltip", "tree", "treegrid", "treeitem",
+];
+
+/**
  * Escapes a string for embedding in a single-quoted TypeScript literal.
  *
  * WHY it is not optional: Arabic labels and tenant names contain apostrophes
@@ -100,6 +123,13 @@ function candidateToExpression(candidate: LocatorCandidate): string {
   }
 
   if (candidate.strategy === "role-and-name") {
+    // getByRole's parameter is a UNION of the ARIA role names, so a page using
+    // a non-standard role attribute produced a spec that did not typecheck.
+    // Fall back to naming the element instead of emitting something red in the
+    // tester's editor.
+    if (!ARIA_ROLES.includes(candidate.role)) {
+      return ".getByText(" + quote(candidate.value) + ", { exact: true })";
+    }
     return ".getByRole(" + quote(candidate.role)
       + ", { name: " + quote(candidate.value) + " })";
   }
@@ -165,6 +195,27 @@ export function locatorToPlaywrightExpression(locator: ElementLocator): string {
 }
 
 /**
+ * Collapses a value onto one line so it cannot break out of a // comment.
+ *
+ * A locator built from an element whose visible text contains a newline - a
+ * multi-line button label, a table cell with a <br> - put that newline straight
+ * into a comment, so everything after it became code. The spec then failed to
+ * parse, which is a confusing way to discover a formatting bug.
+ */
+function toSingleLine(value: string): string {
+  let collapsed: string = "";
+  for (let index = 0; index < value.length; index = index + 1) {
+    const character: string = value.charAt(index);
+    if (character === "\n" || character === "\r") {
+      collapsed = collapsed + " ";
+    } else {
+      collapsed = collapsed + character;
+    }
+  }
+  return collapsed;
+}
+
+/**
  * Produces the comment lines that must accompany a locator, if any.
  */
 export function buildLocatorComments(locator: ElementLocator): string[] {
@@ -186,7 +237,7 @@ export function buildLocatorComments(locator: ElementLocator): string[] {
       comments.push(
         "//   Alternative (" + fallback.strategy + ", matched "
         + String(fallback.matchCount) + " element(s) when recorded): "
-        + fallback.value);
+        + toSingleLine(fallback.value));
     }
   }
 
