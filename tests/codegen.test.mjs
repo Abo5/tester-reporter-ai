@@ -1,0 +1,333 @@
+// =============================================================================
+// tests/codegen.test.mjs
+// The generated spec is read and edited by a junior tester, so it is tested for
+// the properties a human cares about: no arbitrary sleeps, real waits, honest
+// comments, and never leaking a redacted value.
+// =============================================================================
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+
+const api = await import("../dist-test/test-api.mjs");
+
+/** Builds a locator of the given strategy without needing a DOM. */
+function makeLocator(overrides = {}) {
+  return {
+    strategy: "role-and-name",
+    primary: {
+      strategy: "role-and-name",
+      value: "Contract Renewal & Continuation",
+      role: "tab",
+      matchCount: 1,
+      isUniqueAtCaptureTime: true,
+    },
+    fallbacks: [],
+    framePath: [],
+    isInShadowDom: false,
+    isClosedShadowHost: false,
+    shadowHostSelectors: [],
+    isInsideRepeatedList: false,
+    listRowAnchorText: "",
+    listRowRole: "",
+    tagName: "button",
+    ariaRole: "tab",
+    visibleText: "Contract Renewal & Continuation",
+    accessibleName: "Contract Renewal & Continuation",
+    ...overrides,
+  };
+}
+
+/** Builds a recorded event without needing a DOM. */
+function makeEvent(index, type, overrides = {}) {
+  return {
+    index,
+    sessionId: "s1",
+    type,
+    wallClockMs: 1000 + index * 1000,
+    videoOffsetMs: index * 1000,
+    pageUrl: "https://staging.example.sa/services",
+    pageTitle: "Service Catalog",
+    tabId: 1,
+    frameId: 0,
+    locator: null,
+    value: "",
+    valueWasRedacted: false,
+    clientX: -1,
+    clientY: -1,
+    domSnapshotId: "",
+    elementContextId: "",
+    ...overrides,
+  };
+}
+
+const SESSION = {
+  id: "s1",
+  name: "Service Catalog - contract renewal",
+  status: "ready",
+  startedAtMs: Date.parse("2026-08-21T09:14:22.000Z"),
+  stoppedAtMs: 0,
+  wallClockDurationMs: 18000,
+  recordedDurationMs: 18000,
+  originTabId: 1,
+  originUrl: "https://staging.example.sa/services",
+  originTitle: "Service Catalog",
+  visitedUrls: [],
+  eventCount: 6,
+  domSnapshotCount: 0,
+  networkEntryCount: 0,
+  networkFailureCount: 1,
+  consoleErrorCount: 0,
+  media: {
+    mediaId: "m1", mimeType: "video/webm", sizeBytes: 1, durationMs: 18000,
+    videoWidth: 1280, videoHeight: 720, frameRate: 10,
+    hasMicrophoneAudio: true, hasTabAudio: true, state: "stopped", failureReason: "",
+  },
+  playwrightScript: "",
+  bugReport: null,
+  editedReportText: "",
+  reportLanguage: "en",
+  reportFailureReason: "",
+  videoUploadConsentGiven: false,
+  redactionSummary: {},
+  lastVideoDeliveryMode: "omitted",
+  videoDowngradeReason: "",
+};
+
+/** The worked example from the plan, as a recorded trace. */
+function buildWorkedExampleTrace() {
+  return [
+    makeEvent(1, "click", {
+      videoOffsetMs: 4200,
+      locator: makeLocator(),
+    }),
+    makeEvent(2, "input", {
+      videoOffsetMs: 9800,
+      value: "TN-40192",
+      locator: makeLocator({
+        strategy: "label",
+        primary: {
+          strategy: "label", value: "Tenant ID", role: "",
+          matchCount: 1, isUniqueAtCaptureTime: true,
+        },
+        ariaRole: "textbox", tagName: "input",
+        visibleText: "", accessibleName: "Tenant ID",
+      }),
+    }),
+    makeEvent(3, "press-key", {
+      videoOffsetMs: 11100,
+      value: "Enter",
+      locator: makeLocator({
+        strategy: "label",
+        primary: {
+          strategy: "label", value: "Tenant ID", role: "",
+          matchCount: 1, isUniqueAtCaptureTime: true,
+        },
+        ariaRole: "textbox", tagName: "input",
+        visibleText: "", accessibleName: "Tenant ID",
+      }),
+    }),
+    makeEvent(4, "url-change", {
+      videoOffsetMs: 11600,
+      wallClockMs: 1000 + 3 * 1000 + 500,
+      pageUrl: "https://staging.example.sa/services?tenant=TN-40192",
+    }),
+    makeEvent(5, "click", {
+      videoOffsetMs: 15400,
+      pageUrl: "https://staging.example.sa/services?tenant=TN-40192",
+      locator: makeLocator({
+        strategy: "css-path",
+        primary: {
+          strategy: "css-path",
+          value: 'div[role="rowgroup"] > div:nth-of-type(3) > button',
+          role: "", matchCount: 1, isUniqueAtCaptureTime: true,
+        },
+        fallbacks: [{
+          strategy: "exact-text", value: "View", role: "",
+          matchCount: 3, isUniqueAtCaptureTime: false,
+        }],
+        ariaRole: "", accessibleName: "View", visibleText: "View",
+      }),
+    }),
+  ];
+}
+
+const FAILING_REQUEST = [{
+  id: "n1",
+  sessionId: "s1",
+  source: "page-world-patch",
+  method: "GET",
+  url: "https://staging.example.sa/api/contracts/TN-40192",
+  statusCode: 500,
+  statusText: "Internal Server Error",
+  startedAtMs: 1000 + 5 * 1000 + 300,
+  durationMs: 220,
+  videoOffsetMs: 15700,
+  requestBodyExcerpt: "",
+  responseBodyExcerpt: '{"error":"tenant_not_found"}',
+  requestHeaders: {},
+  responseContentType: "application/json",
+  isFailure: true,
+  initiatorPageUrl: "https://staging.example.sa/services",
+}];
+
+test("the generated spec NEVER contains an arbitrary sleep", () => {
+  const spec = api.generatePlaywrightSpec(
+    SESSION, buildWorkedExampleTrace(), FAILING_REQUEST);
+
+  assert.ok(!spec.includes("waitForTimeout"),
+    "a sleep leaked into the generated spec; Playwright auto-waits instead");
+  assert.ok(!spec.includes("setTimeout"));
+});
+
+test("a click that caused a navigation gets a real waitForURL", () => {
+  const spec = api.generatePlaywrightSpec(
+    SESSION, buildWorkedExampleTrace(), FAILING_REQUEST);
+
+  assert.ok(
+    spec.includes("await page.waitForURL('https://staging.example.sa/services?tenant=TN-40192');"),
+    "expected a derived wait after the key press that changed the URL",
+  );
+});
+
+test("the spec points at the request that failed right after a step", () => {
+  const spec = api.generatePlaywrightSpec(
+    SESSION, buildWorkedExampleTrace(), FAILING_REQUEST);
+
+  assert.ok(spec.includes("A request failed here during recording:"));
+  assert.ok(spec.includes("/api/contracts/TN-40192 -> 500"));
+});
+
+test("a fragile locator is flagged with its alternatives", () => {
+  const spec = api.generatePlaywrightSpec(
+    SESSION, buildWorkedExampleTrace(), FAILING_REQUEST);
+
+  assert.ok(spec.includes("// FRAGILE:"));
+  assert.ok(spec.includes("Alternative (exact-text, matched 3 element(s)"));
+});
+
+test("the spec starts with an explicit goto so it runs from a clean browser", () => {
+  const spec = api.generatePlaywrightSpec(
+    SESSION, buildWorkedExampleTrace(), FAILING_REQUEST);
+
+  assert.ok(spec.includes("await page.goto('https://staging.example.sa/services');"));
+  assert.ok(spec.includes("import { test, expect } from '@playwright/test';"));
+});
+
+test("a redacted value is never written into the generated spec", () => {
+  const events = [makeEvent(1, "input", {
+    value: "[REDACTED:password]",
+    valueWasRedacted: true,
+    locator: makeLocator({
+      strategy: "label",
+      primary: {
+        strategy: "label", value: "Password", role: "",
+        matchCount: 1, isUniqueAtCaptureTime: true,
+      },
+      accessibleName: "Password", visibleText: "", tagName: "input",
+    }),
+  })];
+
+  const spec = api.generatePlaywrightSpec(SESSION, events, []);
+
+  assert.ok(spec.includes("process.env.TEST_SECRET_VALUE"),
+    "a redacted field should read its value from the environment");
+  assert.ok(!spec.includes("[REDACTED:password]'"),
+    "the redaction marker should not become a literal fill() argument");
+});
+
+test("closing assertions are derived, never invented", () => {
+  const spec = api.generatePlaywrightSpec(
+    SESSION, buildWorkedExampleTrace(), FAILING_REQUEST);
+
+  assert.ok(spec.includes("Assertions derived from the final recorded state"));
+  assert.ok(spec.includes(
+    "await expect(page).toHaveURL('https://staging.example.sa/services?tenant=TN-40192');"));
+});
+
+test("an apostrophe in a label does not break the generated TypeScript", () => {
+  const events = [makeEvent(1, "click", {
+    locator: makeLocator({
+      primary: {
+        strategy: "role-and-name", value: "Owner's details", role: "button",
+        matchCount: 1, isUniqueAtCaptureTime: true,
+      },
+      accessibleName: "Owner's details",
+    }),
+  })];
+
+  const spec = api.generatePlaywrightSpec(SESSION, events, []);
+  assert.ok(spec.includes("Owner\\'s details"), "the apostrophe was not escaped");
+});
+
+test("an Arabic label survives into the spec unchanged", () => {
+  const events = [makeEvent(1, "click", {
+    locator: makeLocator({
+      primary: {
+        strategy: "role-and-name", value: "تجديد العقد", role: "tab",
+        matchCount: 1, isUniqueAtCaptureTime: true,
+      },
+      accessibleName: "تجديد العقد",
+    }),
+  })];
+
+  const spec = api.generatePlaywrightSpec(SESSION, events, []);
+  assert.ok(spec.includes("تجديد العقد"));
+});
+
+test("an element inside an iframe produces a frameLocator chain", () => {
+  const events = [makeEvent(1, "click", {
+    locator: makeLocator({
+      framePath: [{
+        frameId: 7,
+        frameSelector: 'iframe[name="payments"]',
+        frameUrl: "https://payments.example.sa/widget",
+      }],
+    }),
+  })];
+
+  const spec = api.generatePlaywrightSpec(SESSION, events, []);
+  assert.ok(spec.includes("page.frameLocator('iframe[name=\"payments\"]')"));
+  assert.ok(spec.includes("nested frame"));
+});
+
+test("a closed shadow root produces an honest warning, not a false locator", () => {
+  const locator = makeLocator({ isClosedShadowHost: true });
+  const comments = api.buildLocatorComments(locator);
+
+  assert.ok(comments.some((line) => line.includes("CLOSED shadow root")));
+  assert.ok(comments.some((line) => line.includes("cannot reach inside")));
+});
+
+test("scroll events become an explanatory comment, not a mouse.wheel call", () => {
+  const events = [
+    makeEvent(1, "scroll", { value: "0,1400" }),
+    makeEvent(2, "click", { locator: makeLocator() }),
+  ];
+
+  const spec = api.generatePlaywrightSpec(SESSION, events, []);
+  assert.ok(!spec.includes("mouse.wheel"));
+  assert.ok(spec.includes("Playwright scrolls elements into view automatically"));
+});
+
+test("duplicate navigations to the same URL are coalesced", () => {
+  const events = [
+    makeEvent(1, "url-change", { pageUrl: "https://x.test/a", wallClockMs: 1000 }),
+    makeEvent(2, "navigate", { pageUrl: "https://x.test/a", wallClockMs: 1500 }),
+    makeEvent(3, "click", { locator: makeLocator() }),
+  ];
+
+  const kept = api.coalesceEventsForCodegen(events);
+  assert.equal(kept.length, 2, "the duplicate navigation should have been dropped");
+});
+
+test("the spec file name is safe for a file system", () => {
+  const name = api.buildSpecFileName({
+    ...SESSION,
+    name: "Service Catalog / contract renewal <staging>",
+  });
+
+  assert.ok(name.endsWith(".spec.ts"));
+  assert.ok(!name.includes("/"));
+  assert.ok(!name.includes("<"));
+  assert.ok(!name.includes(" "));
+});

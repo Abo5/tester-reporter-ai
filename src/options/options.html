@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tester-Reporter-AI settings</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main class="page">
+      <h1>Tester-Reporter-AI settings</h1>
+
+      <section class="card">
+        <h2>Gemini API key</h2>
+        <p class="hint">
+          Get a key from Google AI Studio. It is stored on this machine only, in the
+          extension's local storage, and is sent only to Google's API.
+          <strong>It is not encrypted</strong> — anyone with access to this browser
+          profile can read it. Use a key scoped to this purpose and revoke it if the
+          machine changes hands.
+        </p>
+        <div class="field-row">
+          <input type="password" id="api-key-input" placeholder="AIza…" autocomplete="off" />
+          <button type="button" id="toggle-key-button" class="secondary">Show</button>
+          <button type="button" id="forget-key-button" class="secondary">Forget key</button>
+        </div>
+        <p id="api-key-status" class="status-line"></p>
+      </section>
+
+      <section class="card">
+        <h2>Model</h2>
+        <label for="model-select">Model used to write the report</label>
+        <select id="model-select"></select>
+        <p class="hint verify-note">
+          VERIFY this model id against the official Gemini model list before relying
+          on it. This project could not confirm that <code>gemini-3.5-flash</code>
+          exists; if it does not, the correct id goes in
+          <code>SUPPORTED_MODELS</code> in <code>src/shared/constants.ts</code>.
+        </p>
+
+        <label for="language-select">Report language</label>
+        <select id="language-select">
+          <option value="en">English</option>
+          <option value="ar">العربية (Arabic)</option>
+        </select>
+      </section>
+
+      <section class="card">
+        <h2>Microphone narration</h2>
+        <p class="hint">
+          Saying what looks wrong while you test is often the single most useful piece
+          of evidence. Chrome must grant microphone access to this extension once,
+          from this page, before the recorder can use it.
+        </p>
+        <div class="field-row">
+          <button type="button" id="enable-microphone-button" class="secondary">
+            Enable microphone
+          </button>
+          <span id="microphone-status" class="status-chip">Unknown</span>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Video privacy</h2>
+        <p class="warning-box">
+          The extension removes passwords, tokens, card numbers and ID numbers from the
+          page code and the action script before sending them.
+          <strong>It cannot remove anything from the video.</strong> The video is a
+          recording of your screen, and whatever was visible will be visible to the AI
+          service.
+        </p>
+        <label class="checkbox-row">
+          <input type="checkbox" id="never-upload-video" />
+          <span>Never upload video (reports are written from page code and script only)</span>
+        </label>
+        <div class="field-row">
+          <button type="button" id="reset-consent-button" class="secondary">
+            Reset the video upload confirmation
+          </button>
+          <span id="consent-status" class="status-chip">Not given</span>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Extra redaction patterns</h2>
+        <p class="hint">
+          One JavaScript regular expression per line, applied on top of the built-in
+          patterns. Anything matching is replaced with <code>[REDACTED:custom]</code>
+          before the evidence leaves this machine. An invalid line is skipped and
+          reported below.
+        </p>
+        <textarea id="redaction-patterns" rows="5"
+          placeholder="\bEMP-\d{6}\b&#10;\bCONTRACT-[A-Z0-9]{8}\b"></textarea>
+        <p id="pattern-status" class="status-line"></p>
+      </section>
+
+      <section class="card">
+        <h2>Storage</h2>
+        <p id="storage-line" class="status-line">Checking…</p>
+        <label for="retention-select">Delete recordings older than</label>
+        <select id="retention-select">
+          <option value="0">Never delete automatically</option>
+          <option value="7">7 days</option>
+          <option value="14">14 days</option>
+          <option value="30">30 days</option>
+        </select>
+        <p class="hint">
+          Off by default. Silently deleting a tester's evidence is worse than a full
+          disk, so nothing is ever removed without you choosing it.
+        </p>
+        <div class="field-row">
+          <button type="button" id="clear-data-button" class="danger">
+            Delete all sessions and recordings
+          </button>
+        </div>
+        <p id="clear-status" class="status-line"></p>
+      </section>
+
+      <section class="card">
+        <h2>Usage this month</h2>
+        <p id="usage-line" class="status-line">—</p>
+        <p class="hint">
+          A local counter of API requests, so you can sanity-check it against your
+          Google AI Studio billing page. It is not a cost figure.
+        </p>
+      </section>
+
+      <p class="saved-note" id="saved-note" hidden>Saved.</p>
+    </main>
+
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

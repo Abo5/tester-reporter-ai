@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tester-Reporter-AI</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <header class="panel-header">
+      <h1>Tester-Reporter-AI</h1>
+      <p class="tagline">Record once. Get a video, a Playwright script, and a bug report.</p>
+    </header>
+
+    <section id="status-card" class="card status-idle">
+      <div class="status-row">
+        <span id="status-dot" class="status-dot"></span>
+        <span id="status-label" class="status-label">Not recording</span>
+        <span id="status-timer" class="status-timer">00:00</span>
+      </div>
+      <dl class="counters">
+        <div><dt>Steps</dt><dd id="count-steps">0</dd></div>
+        <div><dt>Failed requests</dt><dd id="count-failures">0</dd></div>
+        <div><dt>Console errors</dt><dd id="count-errors">0</dd></div>
+      </dl>
+    </section>
+
+    <p id="error-box" class="error-box" hidden></p>
+
+    <section class="card">
+      <label class="checkbox-row">
+        <input type="checkbox" id="microphone-toggle" />
+        <span>Record microphone narration</span>
+      </label>
+      <p id="microphone-hint" class="hint">
+        Say what looks wrong while you test. The AI listens to it.
+      </p>
+
+      <div class="button-row">
+        <button id="record-button" class="primary" type="button">Record</button>
+        <button id="pause-button" class="secondary" type="button" hidden>Pause</button>
+        <button id="resume-button" class="secondary" type="button" hidden>Resume</button>
+        <button id="stop-button" class="danger" type="button" hidden>Stop</button>
+      </div>
+    </section>
+
+    <section class="card" id="note-card" hidden>
+      <label for="note-input">Drop a marker at this moment</label>
+      <div class="note-row">
+        <input type="text" id="note-input" placeholder="e.g. this list should be sorted by date" />
+        <button id="note-button" class="secondary" type="button">Add</button>
+      </div>
+      <p class="hint">Markers are sent to the AI as tester notes.</p>
+    </section>
+
+    <section class="card">
+      <h2>Recent sessions</h2>
+      <ul id="session-list" class="session-list"></ul>
+      <p id="no-sessions" class="hint">No sessions yet.</p>
+    </section>
+
+    <footer class="panel-footer">
+      <button id="options-button" class="link-button" type="button">Settings</button>
+      <span id="api-key-warning" class="warning-chip" hidden>No API key</span>
+    </footer>
+
+    <script type="module" src="sidepanel.js"></script>
+  </body>
+</html>

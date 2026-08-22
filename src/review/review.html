@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>QA session review</title>
+    <link rel="stylesheet" href="review.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="page-header">
+        <div>
+          <h1 id="session-name">Loading session…</h1>
+          <p id="session-meta" class="session-meta"></p>
+        </div>
+        <div class="header-actions">
+          <button type="button" id="settings-button" class="secondary">Settings</button>
+          <button type="button" id="delete-button" class="danger">Delete session</button>
+        </div>
+      </header>
+
+      <p id="page-error" class="error-box" hidden></p>
+
+      <div class="layout">
+        <!-- ------------------------------------------------------------ -->
+        <!-- Left column: video and the step list synced to its timeline   -->
+        <!-- ------------------------------------------------------------ -->
+        <section class="column">
+          <div class="card">
+            <h2>Session video</h2>
+            <video id="session-video" controls playsinline></video>
+            <p id="video-note" class="hint"></p>
+            <div class="button-row">
+              <button type="button" id="download-video-button" class="secondary">
+                Download video
+              </button>
+              <button type="button" id="delete-video-button" class="secondary">
+                Delete video, keep report
+              </button>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>Steps <span id="step-count" class="muted"></span></h2>
+            <p class="hint">Click a step to jump to that moment in the video.</p>
+            <ol id="step-list" class="step-list"></ol>
+          </div>
+        </section>
+
+        <!-- ------------------------------------------------------------ -->
+        <!-- Right column: the report, then the script                     -->
+        <!-- ------------------------------------------------------------ -->
+        <section class="column">
+          <div class="card" id="report-card">
+            <h2>Bug report</h2>
+
+            <div id="report-status" class="status-panel">
+              <p id="report-status-text">Preparing the evidence…</p>
+              <div class="button-row" id="report-actions" hidden>
+                <button type="button" id="generate-button" class="primary">
+                  Generate report
+                </button>
+                <button type="button" id="generate-no-video-button" class="secondary">
+                  Generate without video
+                </button>
+              </div>
+            </div>
+
+            <div id="setup-panel" class="warning-box" hidden>
+              <strong>No Gemini API key is set.</strong>
+              Your video and your Playwright script are ready below — the written
+              report needs a key.
+              <button type="button" id="open-settings-button" class="secondary">
+                Add a key in Settings
+              </button>
+            </div>
+
+            <div id="unverified-banner" class="warning-box" hidden>
+              <strong>The AI inferred the following rather than observing it.</strong>
+              Check these before you file the report.
+              <ul id="unverified-list"></ul>
+            </div>
+
+            <div id="evidence-badges" class="badge-row"></div>
+
+            <textarea id="report-text" rows="22" spellcheck="true"
+              placeholder="The generated report will appear here, and you can edit it before sharing."></textarea>
+
+            <div class="button-row">
+              <button type="button" id="copy-report-button" class="primary">
+                Copy report
+              </button>
+              <button type="button" id="copy-report-full-button" class="secondary">
+                Copy with metadata
+              </button>
+              <button type="button" id="regenerate-button" class="secondary">
+                Regenerate
+              </button>
+            </div>
+            <p id="copy-status" class="status-line"></p>
+
+            <details id="supporting-container" hidden>
+              <summary>Why the AI says this</summary>
+              <ul id="supporting-list"></ul>
+            </details>
+
+            <details id="secondary-container" hidden>
+              <summary>Other issues noticed (not part of this report)</summary>
+              <ul id="secondary-list"></ul>
+            </details>
+          </div>
+
+          <div class="card">
+            <h2>Playwright script</h2>
+            <p class="hint">
+              A starting point, not a finished test. Read the locators before you
+              trust it.
+            </p>
+            <pre id="script-text" class="code-block"></pre>
+            <div class="button-row">
+              <button type="button" id="copy-script-button" class="secondary">
+                Copy script
+              </button>
+              <button type="button" id="download-script-button" class="secondary">
+                Download .spec.ts
+              </button>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>Evidence sent to the AI</h2>
+            <p class="hint">
+              Exactly what left this machine, after redaction. Shown so you can see
+              why the report says what it says.
+            </p>
+            <p id="redaction-line" class="status-line"></p>
+            <details>
+              <summary>Show the full evidence bundle</summary>
+              <pre id="bundle-text" class="code-block small"></pre>
+            </details>
+            <details id="raw-response-container" hidden>
+              <summary>Raw model response (technical details)</summary>
+              <pre id="raw-response-text" class="code-block small"></pre>
+            </details>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <!-- ---------------------------------------------------------------- -->
+    <!-- The one-time video upload consent dialog                         -->
+    <!-- ---------------------------------------------------------------- -->
+    <dialog id="consent-dialog">
+      <h2>The session video will be uploaded to Google's Gemini API</h2>
+      <p>
+        The extension removes passwords, tokens, card numbers and ID numbers from the
+        page code and the action script before sending them.
+        <strong>It cannot remove anything from the video.</strong>
+        The video is a recording of your screen, and whatever was visible on screen
+        will be visible to the AI service.
+      </p>
+      <p>Do not upload a recording that shows real customer data or credentials.</p>
+      <label class="checkbox-row">
+        <input type="checkbox" id="consent-checkbox" />
+        <span>I understand and want to upload the video for this session.</span>
+      </label>
+      <div class="button-row">
+        <button type="button" id="consent-with-video" class="primary" disabled>
+          Generate report with video
+        </button>
+        <button type="button" id="consent-without-video" class="secondary">
+          Generate report without video
+        </button>
+        <button type="button" id="consent-cancel" class="secondary">Cancel</button>
+      </div>
+    </dialog>
+
+    <script type="module" src="review.js"></script>
+  </body>
+</html>

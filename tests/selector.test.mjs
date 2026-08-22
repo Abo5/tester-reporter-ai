@@ -1,0 +1,234 @@
+// =============================================================================
+// tests/selector.test.mjs
+// The selector chain is the hardest part of the extension, so it gets the most
+// specific tests: the ordering of the fallback chain, the refusal to use class
+// names, and the list-row anchoring that turns a meaningless .nth(2) into
+// "the row for tenant TN-40192".
+// =============================================================================
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { installDom } from "./dom-setup.mjs";
+
+test("a test id beats everything else", async () => {
+  installDom(`<html><body>
+    <button data-testid="save-button" class="css-1a2b3c">Save</button>
+  </body></html>`);
+  const api = await import("../dist-test/test-api.mjs");
+
+  const element = document.querySelector("button");
+  const locator = api.getElementSelector(element);
+
+  assert.equal(locator.strategy, "test-id");
+  assert.equal(locator.primary.value, '[data-testid="save-button"]');
+  assert.equal(locator.primary.isUniqueAtCaptureTime, true);
+});
+
+test("role and accessible name are used when there is no test id", async () => {
+  installDom(`<html><body>
+    <div role="tablist">
+      <button role="tab">Contract Renewal &amp; Continuation</button>
+      <button role="tab">Ending the Rental Relationship</button>
+    </div>
+  </body></html>`);
+  const api = await import("../dist-test/test-api.mjs");
+
+  const element = document.querySelectorAll("button")[0];
+  const locator = api.getElementSelector(element);
+
+  assert.equal(locator.strategy, "role-and-name");
+  assert.equal(locator.primary.role, "tab");
+  assert.equal(locator.primary.value, "Contract Renewal & Continuation");
+});
+
+test("a form control uses its label", async () => {
+  installDom(`<html><body>
+    <label for="tenant">Tenant ID</label>
+    <input id="tenant" type="text" />
+  </body></html>`);
+  const api = await import("../dist-test/test-api.mjs");
+
+  const element = document.querySelector("input");
+  const locator = api.getElementSelector(element);
+
+  // getByRole('textbox', { name: 'Tenant ID' }) and getByLabel('Tenant ID') are
+  // both correct here; either is acceptable as long as it is name-based and not
+  // a CSS path.
+  assert.ok(
+    locator.strategy === "label" || locator.strategy === "role-and-name",
+    `expected a name-based locator, got ${locator.strategy}`,
+  );
+  assert.equal(locator.primary.value, "Tenant ID");
+});
+
+test("class names never appear in any locator candidate", async () => {
+  installDom(`<html><body>
+    <div class="css-1x2y3z4 flex items-center gap-2 rounded-md px-3">
+      <span class="emotion-9f8e7d">Untitled</span>
+    </div>
+  </body></html>`);
+  const api = await import("../dist-test/test-api.mjs");
+
+  const element = document.querySelector("span");
+  const locator = api.getElementSelector(element);
+
+  const allCandidates = [locator.primary, ...locator.fallbacks];
+  for (const candidate of allCandidates) {
+    assert.ok(!candidate.value.includes("css-1x2y3z4"),
+      `a generated class name leaked into a ${candidate.strategy} locator`);
+    assert.ok(!candidate.value.includes("emotion-"),
+      `a generated class name leaked into a ${candidate.strategy} locator`);
+    assert.ok(!candidate.value.includes("items-center"),
+      `a Tailwind utility class leaked into a ${candidate.strategy} locator`);
+  }
+});
+
+test("framework-generated ids are rejected", async () => {
+  const api = await import("../dist-test/test-api.mjs");
+
+  assert.equal(api.looksLikeGeneratedIdentifier(":r3:"), true);
+  assert.equal(api.looksLikeGeneratedIdentifier("mui-1842"), true);
+  assert.equal(api.looksLikeGeneratedIdentifier("radix-:r7:"), true);
+  assert.equal(api.looksLikeGeneratedIdentifier("field-a3f9c2b81e4d"), true);
+  assert.equal(api.looksLikeGeneratedIdentifier("tenant-search"), false);
+  assert.equal(api.looksLikeGeneratedIdentifier("submit"), false);
+});
+
+test("a non-unique locator is not promoted to primary", async () => {
+  installDom(`<html><body>
+    <button>View</button>
+    <button>View</button>
+    <button>View</button>
+  </body></html>`);
+  const api = await import("../dist-test/test-api.mjs");
+
+  const element = document.querySelectorAll("button")[1];
+  const locator = api.getElementSelector(element);
+
+  assert.equal(locator.primary.isUniqueAtCaptureTime, true,
+    "the chosen locator should be one that actually resolved to one element");
+});
+
+test("an element inside a repeated list is anchored on unique row text", async () => {
+  installDom(`<html><body>
+    <div role="rowgroup">
+      <div role="row"><span>TN-40190</span><button>View</button></div>
+      <div role="row"><span>TN-40191</span><button>View</button></div>
+      <div role="row"><span>TN-40192</span><button>View</button></div>
+    </div>
+  </body></html>`);
+  const api = await import("../dist-test/test-api.mjs");
+
+  const element = document.querySelectorAll("button")[2];
+  const locator = api.getElementSelector(element);
+
+  assert.equal(locator.isInsideRepeatedList, true);
+  assert.equal(locator.listRowAnchorText, "TN-40192");
+  assert.equal(locator.listRowRole, "row");
+
+  const expression = api.locatorToPlaywrightExpression(locator);
+  assert.ok(expression.includes("filter({ hasText: 'TN-40192' })"),
+    `expected a row-scoped locator, got: ${expression}`);
+});
+
+test("an open shadow root is pierced by composedPath-style lookup", async () => {
+  installDom(`<html><body><my-widget></my-widget></body></html>`);
+  const api = await import("../dist-test/test-api.mjs");
+
+  const host = document.querySelector("my-widget");
+  const root = host.attachShadow({ mode: "open" });
+  root.innerHTML = `<button data-testid="inner-save">Save</button>`;
+
+  const inner = root.querySelector("button");
+  const locator = api.getElementSelector(inner);
+
+  assert.equal(locator.isInShadowDom, true);
+  assert.equal(locator.strategy, "test-id");
+  assert.ok(locator.shadowHostSelectors.length >= 1);
+
+  const comments = api.buildLocatorComments(locator);
+  assert.ok(comments.some((line) => line.includes("open shadow root")),
+    "the generated spec should explain the shadow DOM to the reader");
+});
+
+test("a fragile locator carries a FRAGILE comment and its alternatives", async () => {
+  installDom(`<html><body>
+    <section><div><div><b>x</b></div></div></section>
+  </body></html>`);
+  const api = await import("../dist-test/test-api.mjs");
+
+  const element = document.querySelector("b");
+  const locator = api.getElementSelector(element);
+  const comments = api.buildLocatorComments(locator);
+
+  if (locator.strategy === "css-path" || locator.strategy === "xpath") {
+    assert.ok(comments.some((line) => line.includes("FRAGILE")));
+  }
+});
+
+test("a text-based locator warns that it is language-specific", async () => {
+  installDom(`<html><body>
+    <div role="tablist"><button role="tab">Contract Renewal</button></div>
+  </body></html>`);
+  const api = await import("../dist-test/test-api.mjs");
+
+  const element = document.querySelector("button");
+  const locator = api.getElementSelector(element);
+  const comments = api.buildLocatorComments(locator);
+
+  assert.ok(
+    comments.some((line) => line.includes("other language build")),
+    "an EN/AR app needs this warning: a spec recorded in English will not run "
+      + "against the Arabic build",
+  );
+});
+
+test("accessible name falls back through label, placeholder and value", async () => {
+  installDom(`<html><body>
+    <input id="a" aria-label="From aria" />
+    <input id="b" placeholder="From placeholder" />
+    <input id="c" type="submit" value="From value" />
+    <img id="d" alt="From alt" />
+  </body></html>`);
+  const api = await import("../dist-test/test-api.mjs");
+
+  assert.equal(api.getAccessibleName(document.getElementById("a")), "From aria");
+  assert.equal(api.getAccessibleName(document.getElementById("b")), "From placeholder");
+  assert.equal(api.getAccessibleName(document.getElementById("c")), "From value");
+  assert.equal(api.getAccessibleName(document.getElementById("d")), "From alt");
+});
+
+test("visible text ignores hidden descendants", async () => {
+  installDom(`<html><body>
+    <button>Menu<span style="display:none">Item A Item B Item C</span></button>
+  </body></html>`);
+  const api = await import("../dist-test/test-api.mjs");
+
+  const element = document.querySelector("button");
+  assert.equal(api.getVisibleText(element), "Menu",
+    "a closed menu's items must not become part of the button's name");
+});
+
+test("element context captures ARIA state, lang, dir and siblings", async () => {
+  installDom(`<html lang="ar" dir="rtl"><body>
+    <div role="tablist">
+      <button role="tab">Alpha</button>
+      <button role="tab" aria-invalid="true" aria-describedby="err">Beta</button>
+      <button role="tab">Gamma</button>
+    </div>
+    <p id="err">Tenant ID must be 8 digits</p>
+  </body></html>`);
+  const api = await import("../dist-test/test-api.mjs");
+
+  const element = document.querySelectorAll("button")[1];
+  const context = api.captureElementContext(element);
+
+  assert.equal(context.ariaState.ariaInvalid, "true");
+  assert.equal(context.ariaState.ariaDescribedByText, "Tenant ID must be 8 digits");
+  assert.equal(context.inheritedLang, "ar");
+  assert.equal(context.inheritedDir, "rtl");
+  assert.ok(context.ancestorHtml.includes('role="tablist"'));
+  assert.equal(context.siblingHtml.length, 2);
+  assert.ok(context.siblingHtml.join(" ").includes("Alpha"));
+  assert.ok(context.siblingHtml.join(" ").includes("Gamma"));
+});

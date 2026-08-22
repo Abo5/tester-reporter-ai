@@ -1,0 +1,387 @@
+// =============================================================================
+// src/sidepanel/sidepanel.ts
+// Recording controls. Holds no state of its own: on open it asks the service
+// worker for the current status and renders whatever it is told.
+//
+// WHY the side panel rather than the popup: a popup closes the instant the
+// tester clicks back into the page, which is every single interaction they are
+// trying to record.
+// =============================================================================
+
+import type { SessionStatus, RecordingSession } from "../shared/types";
+import { asExtensionMessage, sendMessageIgnoringNoReceiver } from "../shared/messages";
+import { listSessions } from "../storage/sessions";
+import { readSettings, writeSettings } from "../storage/settings";
+import { formatVideoTimestamp, formatDuration } from "../shared/time";
+import { logWarning } from "../shared/logger";
+
+/** Every element we touch, looked up once so a typo fails immediately. */
+interface PanelElements {
+  statusCard: HTMLElement;
+  statusLabel: HTMLElement;
+  statusTimer: HTMLElement;
+  countSteps: HTMLElement;
+  countFailures: HTMLElement;
+  countErrors: HTMLElement;
+  errorBox: HTMLElement;
+  microphoneToggle: HTMLInputElement;
+  recordButton: HTMLButtonElement;
+  pauseButton: HTMLButtonElement;
+  resumeButton: HTMLButtonElement;
+  stopButton: HTMLButtonElement;
+  noteCard: HTMLElement;
+  noteInput: HTMLInputElement;
+  noteButton: HTMLButtonElement;
+  sessionList: HTMLElement;
+  noSessions: HTMLElement;
+  optionsButton: HTMLButtonElement;
+  apiKeyWarning: HTMLElement;
+}
+
+/** The last status we were told, so the local timer can keep ticking. */
+let currentStatus: SessionStatus | "idle" = "idle";
+let lastReportedDurationMs: number = 0;
+let lastReportAtMs: number = 0;
+
+/**
+ * Looks up an element by id and throws if it is missing.
+ * WHY throw: a missing element is a build mistake, and failing loudly at load
+ * is far easier to debug than a button that silently does nothing.
+ */
+function requireElement<T extends HTMLElement>(elementId: string): T {
+  const element: HTMLElement | null = document.getElementById(elementId);
+  if (element === null) {
+    throw new Error("Missing element in sidepanel.html: #" + elementId);
+  }
+  return element as T;
+}
+
+/** Collects every element the panel drives. */
+function collectElements(): PanelElements {
+  return {
+    statusCard: requireElement("status-card"),
+    statusLabel: requireElement("status-label"),
+    statusTimer: requireElement("status-timer"),
+    countSteps: requireElement("count-steps"),
+    countFailures: requireElement("count-failures"),
+    countErrors: requireElement("count-errors"),
+    errorBox: requireElement("error-box"),
+    microphoneToggle: requireElement<HTMLInputElement>("microphone-toggle"),
+    recordButton: requireElement<HTMLButtonElement>("record-button"),
+    pauseButton: requireElement<HTMLButtonElement>("pause-button"),
+    resumeButton: requireElement<HTMLButtonElement>("resume-button"),
+    stopButton: requireElement<HTMLButtonElement>("stop-button"),
+    noteCard: requireElement("note-card"),
+    noteInput: requireElement<HTMLInputElement>("note-input"),
+    noteButton: requireElement<HTMLButtonElement>("note-button"),
+    sessionList: requireElement("session-list"),
+    noSessions: requireElement("no-sessions"),
+    optionsButton: requireElement<HTMLButtonElement>("options-button"),
+    apiKeyWarning: requireElement("api-key-warning"),
+  };
+}
+
+const elements: PanelElements = collectElements();
+
+// -----------------------------------------------------------------------------
+// Rendering
+// -----------------------------------------------------------------------------
+
+/** Human-readable label for each state. */
+function statusLabelFor(status: SessionStatus | "idle"): string {
+  if (status === "recording") {
+    return "Recording";
+  }
+  if (status === "paused") {
+    return "Paused";
+  }
+  if (status === "processing") {
+    return "Finishing the recording…";
+  }
+  if (status === "ready" || status === "complete") {
+    return "Session ready";
+  }
+  if (status === "report-failed") {
+    return "Session saved, report failed";
+  }
+  return "Not recording";
+}
+
+/** Applies the state class that drives the status dot colour. */
+function applyStatusClass(status: SessionStatus | "idle"): void {
+  elements.statusCard.className = "card status-" + status;
+}
+
+/** Shows only the buttons that make sense right now. */
+function renderButtons(status: SessionStatus | "idle"): void {
+  const isRecording: boolean = status === "recording";
+  const isPaused: boolean = status === "paused";
+  const isBusy: boolean = status === "processing";
+  const isActive: boolean = isRecording || isPaused;
+
+  elements.recordButton.hidden = isActive || isBusy;
+  elements.pauseButton.hidden = !isRecording;
+  elements.resumeButton.hidden = !isPaused;
+  elements.stopButton.hidden = !isActive;
+
+  elements.recordButton.disabled = isBusy;
+  elements.noteCard.hidden = !isActive;
+  elements.microphoneToggle.disabled = isActive || isBusy;
+}
+
+/** Updates the whole panel from one status message. */
+function renderStatus(
+  status: SessionStatus | "idle",
+  eventCount: number,
+  recordedDurationMs: number,
+  networkFailureCount: number,
+  consoleErrorCount: number,
+  errorText: string,
+): void {
+  currentStatus = status;
+  lastReportedDurationMs = recordedDurationMs;
+  lastReportAtMs = Date.now();
+
+  applyStatusClass(status);
+  elements.statusLabel.textContent = statusLabelFor(status);
+  elements.statusTimer.textContent = formatVideoTimestamp(recordedDurationMs);
+  elements.countSteps.textContent = String(eventCount);
+  elements.countFailures.textContent = String(networkFailureCount);
+  elements.countErrors.textContent = String(consoleErrorCount);
+
+  renderButtons(status);
+
+  if (errorText === "") {
+    elements.errorBox.hidden = true;
+    elements.errorBox.textContent = "";
+  } else {
+    elements.errorBox.hidden = false;
+    elements.errorBox.textContent = errorText;
+  }
+
+  if (status === "ready" || status === "complete" || status === "idle") {
+    void renderSessionList();
+  }
+}
+
+/**
+ * Ticks the timer locally between status messages.
+ *
+ * WHY locally: broadcasting a status message every second just to move a clock
+ * would wake the service worker constantly for no reason.
+ */
+function tickTimer(): void {
+  if (currentStatus !== "recording") {
+    return;
+  }
+  const elapsedSinceReport: number = Date.now() - lastReportAtMs;
+  elements.statusTimer.textContent =
+    formatVideoTimestamp(lastReportedDurationMs + elapsedSinceReport);
+}
+
+/** Renders the recent-sessions list with a link to each review page. */
+async function renderSessionList(): Promise<void> {
+  let sessions: RecordingSession[] = [];
+  try {
+    sessions = await listSessions();
+  } catch (listError: unknown) {
+    logWarning("sidepanel", "Could not read the session list.", listError);
+    return;
+  }
+
+  elements.sessionList.replaceChildren();
+
+  if (sessions.length === 0) {
+    elements.noSessions.hidden = false;
+    return;
+  }
+  elements.noSessions.hidden = true;
+
+  const shown: number = Math.min(sessions.length, 6);
+  for (let index = 0; index < shown; index = index + 1) {
+    const session: RecordingSession = sessions[index];
+
+    const listItem: HTMLLIElement = document.createElement("li");
+    const openButton: HTMLButtonElement = document.createElement("button");
+    openButton.type = "button";
+    openButton.className = "session-open";
+
+    const nameSpan: HTMLSpanElement = document.createElement("span");
+    nameSpan.className = "session-name";
+    nameSpan.textContent = session.name;
+
+    const metaSpan: HTMLSpanElement = document.createElement("span");
+    metaSpan.className = "session-meta";
+    metaSpan.textContent = describeSession(session);
+
+    openButton.append(nameSpan, metaSpan);
+    openButton.addEventListener("click", function onOpen(): void {
+      void sendMessageIgnoringNoReceiver({
+        kind: "ui/open-review-page",
+        sessionId: session.id,
+      });
+    });
+
+    listItem.append(openButton);
+    elements.sessionList.append(listItem);
+  }
+}
+
+/** One-line summary of a stored session. */
+function describeSession(session: RecordingSession): string {
+  const parts: string[] = [];
+  parts.push(new Date(session.startedAtMs).toLocaleString());
+  parts.push(formatDuration(session.recordedDurationMs));
+  parts.push(String(session.eventCount) + " steps");
+
+  if (session.bugReport !== null) {
+    parts.push("report ready");
+  } else if (session.status === "report-failed") {
+    parts.push("report pending");
+  }
+  return parts.join(" · ");
+}
+
+// -----------------------------------------------------------------------------
+// Actions
+// -----------------------------------------------------------------------------
+
+/** Finds the tab the tester is looking at. */
+async function findActiveTabId(): Promise<number | null> {
+  const tabs: chrome.tabs.Tab[] =
+    await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tabs.length === 0 || tabs[0].id === undefined) {
+    return null;
+  }
+  return tabs[0].id;
+}
+
+/** Shows a message in the error box without waiting for a status broadcast. */
+function showLocalError(text: string): void {
+  elements.errorBox.hidden = false;
+  elements.errorBox.textContent = text;
+}
+
+/**
+ * Starts recording on the active tab.
+ *
+ * The extension cannot record a chrome:// page or the Web Store, so we say so
+ * plainly rather than letting tabCapture fail with an opaque error.
+ */
+async function startRecording(): Promise<void> {
+  const tabId: number | null = await findActiveTabId();
+  if (tabId === null) {
+    showLocalError("Could not find the active tab.");
+    return;
+  }
+
+  const tab: chrome.tabs.Tab = await chrome.tabs.get(tabId);
+  const url: string = tab.url ?? "";
+  const isRecordable: boolean =
+    url.startsWith("http://") || url.startsWith("https://");
+
+  if (!isRecordable) {
+    showLocalError(
+      "This page cannot be recorded. Open the site you want to test in a normal "
+      + "http:// or https:// tab first.");
+    return;
+  }
+
+  await writeSettings({ captureMicrophone: elements.microphoneToggle.checked });
+
+  const reply: unknown = await chrome.runtime.sendMessage({
+    kind: "ui/start-recording",
+    tabId: tabId,
+    captureMicrophone: elements.microphoneToggle.checked,
+  });
+
+  const typedReply = reply as { ok?: boolean; error?: string } | undefined;
+  if (typedReply !== undefined && typedReply.ok === false) {
+    showLocalError(typedReply.error ?? "Recording could not be started.");
+  }
+}
+
+/** Sends the note the tester typed, then clears the box. */
+async function addTesterNote(): Promise<void> {
+  const text: string = elements.noteInput.value.trim();
+  if (text === "") {
+    return;
+  }
+  elements.noteInput.value = "";
+  await sendMessageIgnoringNoReceiver({ kind: "ui/add-tester-note", text: text });
+}
+
+// -----------------------------------------------------------------------------
+// Wiring
+// -----------------------------------------------------------------------------
+
+/** Attaches every click handler. */
+function installHandlers(): void {
+  elements.recordButton.addEventListener("click", function onRecord(): void {
+    startRecording().catch(function onStartError(startError: unknown): void {
+      showLocalError(String(startError));
+    });
+  });
+
+  elements.pauseButton.addEventListener("click", function onPause(): void {
+    void sendMessageIgnoringNoReceiver({ kind: "ui/pause-recording" });
+  });
+
+  elements.resumeButton.addEventListener("click", function onResume(): void {
+    void sendMessageIgnoringNoReceiver({ kind: "ui/resume-recording" });
+  });
+
+  elements.stopButton.addEventListener("click", function onStop(): void {
+    void sendMessageIgnoringNoReceiver({ kind: "ui/stop-recording" });
+  });
+
+  elements.noteButton.addEventListener("click", function onNote(): void {
+    void addTesterNote();
+  });
+
+  elements.noteInput.addEventListener("keydown", function onNoteKey(
+    event: KeyboardEvent,
+  ): void {
+    if (event.key === "Enter") {
+      void addTesterNote();
+    }
+  });
+
+  elements.optionsButton.addEventListener("click", function onOptions(): void {
+    void chrome.runtime.openOptionsPage();
+  });
+
+  chrome.runtime.onMessage.addListener(function onMessage(rawMessage: unknown): void {
+    const message = asExtensionMessage(rawMessage);
+    if (message === null || message.kind !== "sw/status") {
+      return;
+    }
+    renderStatus(
+      message.status,
+      message.eventCount,
+      message.recordedDurationMs,
+      message.networkFailureCount,
+      message.consoleErrorCount,
+      message.errorText,
+    );
+  });
+
+  window.setInterval(tickTimer, 500);
+}
+
+/** Loads settings, asks for the current status, and renders. */
+async function initialisePanel(): Promise<void> {
+  installHandlers();
+
+  const settings = await readSettings();
+  elements.microphoneToggle.checked = settings.captureMicrophone;
+  elements.apiKeyWarning.hidden = settings.geminiApiKey.trim() !== "";
+
+  renderStatus("idle", 0, 0, 0, 0, "");
+  await renderSessionList();
+  await sendMessageIgnoringNoReceiver({ kind: "ui/get-status" });
+}
+
+initialisePanel().catch(function onInitError(initError: unknown): void {
+  showLocalError("The panel failed to start: " + String(initError));
+});
