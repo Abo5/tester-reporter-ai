@@ -364,3 +364,58 @@ test("a recorded video survives pause and resume as ONE playable file", async (t
 
   await page.close();
 });
+
+test("the final frame of the recording is usable as the report's screenshot", async () => {
+  // captureVisibleTab needs <all_urls> or activeTab; a specific host grant does
+  // NOT satisfy it. So the picture in the report often has to come from the
+  // recording itself - the same moment, no extra permission. This proves the
+  // frame is real and decodable, not a blank canvas from seeking past the end.
+  const session = await waitFor("a finished session with video", async () => {
+    const sessions = await readStore(extensionPage, "sessions");
+    const withVideo = sessions.filter((s) => s.media && s.media.sizeBytes > 1000
+      && s.status !== "recording" && s.status !== "processing");
+    if (withVideo.length === 0) { return null; }
+    withVideo.sort((a, b) => b.startedAtMs - a.startedAtMs);
+    return withVideo[0];
+  }, 20000);
+
+  const frame = await extensionPage.evaluate(async (mediaId) => {
+    const db = await new Promise((res, rej) => {
+      const r = indexedDB.open("tester-reporter-ai");
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+    });
+    const record = await new Promise((res, rej) => {
+      const tx = db.transaction("media", "readonly");
+      const q = tx.objectStore("media").get(mediaId);
+      q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error);
+    });
+    if (!record || !record.blob) { return { ok: false, why: "no blob" }; }
+
+    const video = document.createElement("video");
+    video.muted = true;
+    video.src = URL.createObjectURL(record.blob);
+    await new Promise((res, rej) => {
+      video.onloadedmetadata = res;
+      video.onerror = () => rej(new Error("metadata failed"));
+    });
+
+    const target = Math.max(0, video.duration - 0.25);
+    await new Promise((res) => { video.onseeked = res; video.currentTime = target; });
+
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d").drawImage(video, 0, 0);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+
+    // A blank canvas compresses to almost nothing. A real page does not.
+    return { ok: true, width: canvas.width, height: canvas.height, chars: dataUrl.length };
+  }, session.media.mediaId);
+
+  console.log(`  final frame: ${JSON.stringify(frame)}`);
+  assert.ok(frame.ok, `could not read the final frame: ${frame.why}`);
+  assert.ok(frame.width > 0 && frame.height > 0, "the frame has no dimensions");
+  assert.ok(frame.chars > 4000,
+    `the frame looks blank (${frame.chars} chars); seeking probably landed past `
+    + "the last decodable frame");
+});

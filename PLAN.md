@@ -7972,6 +7972,53 @@ click says the tester could not find the control.
 
 ---
 
+### 19.s Pace, a picture, and a counter that told the truth late
+
+Four things from a tester using the product, and one non-finding worth writing
+down because it corrects an earlier test of mine.
+
+**Ctrl+F was working.** The earlier test pressed it through CDP, which
+dispatches straight to the page and bypasses the browser's own handling — it
+proved the handler worked, not that Chrome delivers the event. Retested with a
+genuine XTEST keypress: the page sees it and the recording captures it
+(`["Control+f"]`). The reported failure was the ungranted session, not the
+keyboard. Same class of mistake as the fake-media flag: testing the wrong layer.
+
+**The counter was late, and the throttle was why.** It returned early inside its
+window rather than deferring, so the last action before a quiet moment never
+reached the panel — it sat one behind until some unrelated event nudged it. A
+trailing edge is the whole fix. The panel also now shows the last action in
+words (*"Last: pressed Control+f"*), because a number going from 11 to 12 does
+not tell a tester WHICH thing was noticed, and that is what they were asking
+for when they said they had no feedback.
+
+**The script now replays at the tester's pace.** `waitLikeTheTesterDid()` waits
+the real recorded gap before each step. A replay at machine speed is a different
+test from the one that was recorded: a token that expires after ten seconds, a
+debounce that settles after two, a toast that vanishes after five — none of them
+happen when every step runs 40ms after the last. Gaps are capped at 15 seconds
+so one interruption does not stall the replay, with the real figure kept in a
+comment, and `REPLAY_SPEED` scales or disables the whole thing for CI.
+
+**A picture of the final state, and a permission that surprised me.**
+`chrome.tabs.captureVisibleTab` requires `<all_urls>` or `activeTab` — **a
+specific host grant does not satisfy it.** Measured: it throws on a tab whose
+own origin is granted. So a session started from the panel, or one whose journey
+crossed origins and lost `activeTab` on the way, would have no picture at all.
+
+The recording already contains that moment. `extractFinalFrame()` takes it from
+the video, which needs no permission recording did not already have, and the
+browser test confirms it decodes to a real 1280x900 image rather than the blank
+canvas you get from seeking past the last frame.
+
+The still follows the **video** consent, not the text-redaction rules, because
+it is the same kind of thing: pixels, which no text redactor can clean. A page
+showing salaries or ID numbers puts them in the image as surely as in the
+recording, and a tester who has said "never upload video" has already answered
+that question.
+
+---
+
 ## 20. Browser verification — what running it actually proved
 
 Section 19.2 said the media path and the Chrome APIs were "still theory". They are not

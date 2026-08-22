@@ -239,7 +239,25 @@ function buildRequestBody(
         data: bundle.video.base64Data,
       },
     });
-  } else if (bundle.video.deliveryMode === "key-frames") {
+  }
+
+  // The final still, sent as its own part regardless of how the video went.
+  //
+  // WHY it is not folded into the video branches: it is the one piece of
+  // evidence that survives every video failure - a machine that cannot
+  // capture, a tester who turned video off, a report generated after the video
+  // was deleted. Attaching it only when the video succeeded would remove it
+  // from exactly the sessions that need it most.
+  if (bundle.finalScreenshotBase64 !== "") {
+    parts.push({
+      inline_data: {
+        mime_type: bundle.finalScreenshotMimeType,
+        data: bundle.finalScreenshotBase64,
+      },
+    });
+  }
+
+  if (bundle.video.deliveryMode === "key-frames") {
     for (let index = 0; index < bundle.video.keyFrameBase64.length;
          index = index + 1) {
       parts.push({

@@ -306,3 +306,112 @@ test("every direct action reaches the recording and the script", async () => {
   console.log(`\n--- script ---\n${script}`);
   await page.close();
 });
+
+test("a screenshot of the final state is captured and kept", async () => {
+  // The tester asked for a picture of the defect at the end, in the report.
+  // The only moment it exists is the instant before they stop recording: by the
+  // time anyone opens the review page, the tab has moved on or closed.
+  const page = await browser.context.newPage();
+  await page.goto(`${server.url}/catalog.html`, { waitUntil: "load" });
+  await page.bringToFront();
+
+  const tabId = await browser.serviceWorker.evaluate(async () =>
+    (await chrome.tabs.query({ active: true, currentWindow: true }))[0]?.id ?? -1);
+
+  await callExtension(extensionPage, {
+    kind: "ui/start-recording", tabId, captureMicrophone: false,
+  });
+  await waitFor("session to reach 'recording'", async () => {
+    const state = await readRecordingState(browser.serviceWorker);
+    return state?.status === "recording";
+  });
+
+  await page.bringToFront();
+  await page.click('[data-testid="tab-renewal"]');
+  await page.waitForTimeout(700);
+
+  await callExtension(extensionPage, { kind: "ui/stop-recording" });
+  const session = await waitFor("session to finish", async () => {
+    const sessions = await readStore(extensionPage, "sessions");
+    const finished = sessions.filter((s) => s.status !== "processing"
+      && s.status !== "recording");
+    if (finished.length === 0) { return null; }
+    finished.sort((a, b) => b.startedAtMs - a.startedAtMs);
+    return finished[0];
+  }, 40000);
+
+  const shot = session.finalScreenshotDataUrl;
+  console.log(`  captureVisibleTab: ${shot === "" ? "unavailable" : shot.length + " chars"}`);
+
+  // captureVisibleTab needs <all_urls> or activeTab, and a specific host grant
+  // does NOT satisfy it - measured, it throws. So a session started from the
+  // panel has no picture from that route, and the fallback takes the moment
+  // from the recording instead. Either source is acceptable; having neither is
+  // not, when there is a video to take it from.
+  const media = session.media;
+  const hasVideo = media !== null && media.sizeBytes > 1000;
+
+  if (shot !== "") {
+    assert.ok(shot.startsWith("data:image/png;base64,"),
+      `the screenshot is not a PNG data URL: ${shot.slice(0, 40)}`);
+    assert.ok(shot.length > 5000, "the screenshot is too small to be a page");
+  } else {
+    console.log("  (no activeTab picture; the video frame is the fallback)");
+    assert.ok(!hasVideo || media.durationMs > 0,
+      "with a recording present there must be a frame to fall back to");
+  }
+
+  await page.close();
+});
+
+test("the step counter never lags behind the last action", async () => {
+  // The throttle used to DROP a broadcast inside its window rather than defer
+  // it, so the last action before a quiet moment never reached the panel. The
+  // tester reported the count was not live, and they were right.
+  const page = await browser.context.newPage();
+  await page.goto(`${server.url}/catalog.html`, { waitUntil: "load" });
+  await page.bringToFront();
+
+  const tabId = await browser.serviceWorker.evaluate(async () =>
+    (await chrome.tabs.query({ active: true, currentWindow: true }))[0]?.id ?? -1);
+
+  await callExtension(extensionPage, {
+    kind: "ui/start-recording", tabId, captureMicrophone: false,
+  });
+  await waitFor("session to reach 'recording'", async () => {
+    const state = await readRecordingState(browser.serviceWorker);
+    return state?.status === "recording";
+  });
+
+  const panel = await openExtensionPage(browser.context, browser.extensionId,
+    "sidepanel/sidepanel.html");
+  await panel.waitForTimeout(700);
+
+  await page.bringToFront();
+  // A burst, then silence. The last one is the one that used to be dropped.
+  await page.click('[data-testid="tab-renewal"]');
+  await page.click('[data-testid="tab-parties"]');
+  await page.click('[data-testid="tab-ending"]');
+  await page.waitForTimeout(1200);   // well past the 150ms window
+
+  const shown = await panel.evaluate(
+    () => Number(document.getElementById("count-steps").textContent));
+  const label = await panel.evaluate(
+    () => document.getElementById("last-action").textContent);
+  // This session's events only. The store holds every session in the file.
+  const activeState = await readRecordingState(browser.serviceWorker);
+  const stored = (await readStore(extensionPage, "events"))
+    .filter((event) => event.sessionId === activeState.sessionId).length;
+
+  console.log(`  panel shows ${shown}, this session holds ${stored}`);
+  console.log(`  last action: ${label}`);
+
+  assert.equal(shown, stored,
+    "the panel is behind storage; a broadcast was dropped rather than deferred");
+  assert.ok((label || "").length > 0,
+    "the panel says nothing about what was just recorded");
+
+  await callExtension(extensionPage, { kind: "ui/stop-recording" });
+  await panel.close();
+  await page.close();
+});

@@ -106,6 +106,57 @@ const IDLE_ERROR_KEY: string = "lastErrorText";
 // -----------------------------------------------------------------------------
 
 /**
+ * A one-line label for the most recent recorded action.
+ *
+ * In memory only. A worker restart loses it and the panel shows nothing until
+ * the next action, which costs a tester nothing - unlike the event counter,
+ * which is read from storage precisely because losing it WOULD matter.
+ */
+let lastActionLabel: string = "";
+
+/**
+ * Turns a recorded event into something a tester recognises as the thing they
+ * just did.
+ *
+ * WHY it exists: a tester pressed Ctrl+F, nothing in the interface changed, and
+ * they concluded it had not been noticed. A counter going from 11 to 12 does
+ * not say WHICH thing was noticed. This does.
+ */
+export function describeActionForPanel(event: RecordedEvent): string {
+  if (event.type === "press-key") {
+    return "pressed " + event.value;
+  }
+  if (event.type === "input") {
+    return event.valueWasRedacted ? "typed a hidden value" : "typed " + event.value;
+  }
+  if (event.type === "paste") {
+    return "pasted";
+  }
+  if (event.type === "right-click") {
+    return "right-clicked";
+  }
+  if (event.type === "middle-click") {
+    return "middle-clicked";
+  }
+  if (event.type === "drag-drop") {
+    return "dragged something";
+  }
+  if (event.type === "mouse-path") {
+    return "moved the pointer";
+  }
+  if (event.type === "navigate" || event.type === "url-change") {
+    return "opened a new page";
+  }
+  if (event.type === "reload") {
+    return "reloaded the page";
+  }
+  if (event.type === "scroll") {
+    return "scrolled";
+  }
+  return event.type.replace("-", " ");
+}
+
+/**
  * Tells the side panel (and anyone else listening) where we are.
  * Broadcast rather than targeted, because the side panel may not be open.
  */
@@ -137,6 +188,7 @@ export async function broadcastStatus(): Promise<void> {
     status: status,
     sessionId: sessionId,
     eventCount: eventCount,
+    lastActionLabel: lastActionLabel,
     recordedDurationMs: recordedDurationMs,
     networkFailureCount: networkFailureCount,
     consoleErrorCount: consoleErrorCount,
@@ -169,6 +221,7 @@ async function notifyTabOfRecordingState(
     kind: "sw/status",
     status: status,
     sessionId: sessionId,
+    lastActionLabel: "",
     eventCount: 0,
     recordedDurationMs: 0,
     networkFailureCount: 0,
@@ -222,15 +275,43 @@ export function withSerialisedState<T>(work: () => Promise<T>): Promise<T> {
  * evidence itself.
  */
 let lastBroadcastAtMs: number = 0;
-const BROADCAST_THROTTLE_MS: number = 400;
+let trailingBroadcastTimerId: number = 0;
+const BROADCAST_THROTTLE_MS: number = 150;
 
+/**
+ * Broadcasts now if the window has passed, and ALWAYS schedules the last one.
+ *
+ * The first version simply returned when a broadcast had happened recently,
+ * which silently dropped it. The visible effect: a tester clicks something,
+ * the click is the last event for a while, and the step counter never catches
+ * up - it sits one behind until the next unrelated event nudges it. They
+ * reported it as the count not being live, and they were right.
+ *
+ * A trailing edge is the whole fix: within the window the broadcast is deferred
+ * rather than discarded, so the final state always arrives. The window exists
+ * because each broadcast reads the session row back out of IndexedDB, and a
+ * fast typist would otherwise generate more storage traffic keeping a counter
+ * live than recording the evidence.
+ */
 async function broadcastStatusThrottled(): Promise<void> {
   const nowMs: number = Date.now();
-  if (nowMs - lastBroadcastAtMs < BROADCAST_THROTTLE_MS) {
+
+  if (nowMs - lastBroadcastAtMs >= BROADCAST_THROTTLE_MS) {
+    lastBroadcastAtMs = nowMs;
+    await broadcastStatus();
     return;
   }
-  lastBroadcastAtMs = nowMs;
-  await broadcastStatus();
+
+  if (trailingBroadcastTimerId !== 0) {
+    return;   // A trailing broadcast is already queued; one is enough.
+  }
+
+  const waitMs: number = BROADCAST_THROTTLE_MS - (nowMs - lastBroadcastAtMs);
+  trailingBroadcastTimerId = setTimeout(function onTrailingEdge(): void {
+    trailingBroadcastTimerId = 0;
+    lastBroadcastAtMs = Date.now();
+    void broadcastStatus();
+  }, waitMs) as unknown as number;
 }
 
 /** Records an error to surface in the side panel, then broadcasts it. */
@@ -522,6 +603,45 @@ async function captureFinalSnapshot(state: ActiveRecordingState): Promise<void> 
   }
 }
 
+
+/**
+ * Takes a PNG of the tab as it looks right now and stores it on the session.
+ *
+ * WHY here and not at report time: by the time anyone opens the review page the
+ * tab has moved on, been navigated away, or been closed. The only moment this
+ * picture exists is the instant before the tester stops recording, which is
+ * also the moment the defect is on screen - it is why they stopped.
+ *
+ * Failure is silent on purpose. captureVisibleTab needs activeTab or a host
+ * grant, and there are ordinary reasons it will not be there: a chrome:// page,
+ * a tab already closed, a site with no grant. Losing the still costs a
+ * convenience; failing the stop would cost the whole session.
+ */
+async function captureFinalScreenshot(state: ActiveRecordingState): Promise<void> {
+  try {
+    const tab: chrome.tabs.Tab = await chrome.tabs.get(state.tabId);
+    if (tab.windowId === undefined) {
+      return;
+    }
+
+    const dataUrl: string = await chrome.tabs.captureVisibleTab(tab.windowId, {
+      format: "png",
+    });
+
+    if (typeof dataUrl !== "string" || dataUrl === "") {
+      return;
+    }
+
+    await updateSession(state.sessionId, { finalScreenshotDataUrl: dataUrl });
+    logInfo("worker", "Captured the final screenshot ("
+      + String(dataUrl.length) + " chars).");
+  } catch (captureError: unknown) {
+    logWarning("worker",
+      "Could not capture the final screenshot; the session is unaffected.",
+      captureError);
+  }
+}
+
 /**
  * Stops capture and hands over to the offscreen document to finalise the file.
  *
@@ -539,6 +659,7 @@ async function handleStopRecording(): Promise<void> {
   // grab it BEFORE anything changes the session status.
   if (state.status === "recording") {
     await captureFinalSnapshot(state);
+    await captureFinalScreenshot(state);
   }
 
   // Fold in a trailing pause so the recorded duration is right either way.
@@ -914,6 +1035,7 @@ async function handleRecordedEvent(
 
   // ONE read-modify-write for both the counter and the visited-URL list.
   await recordEventProgress(state.sessionId, state.eventCount, stamped.pageUrl);
+  lastActionLabel = describeActionForPanel(event);
   await broadcastStatusThrottled();
 }
 

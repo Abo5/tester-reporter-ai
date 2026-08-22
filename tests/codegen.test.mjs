@@ -189,14 +189,19 @@ test("no step SYNCHRONISES on a sleep", () => {
 
   assert.ok(!spec.includes("setTimeout"));
 
-  // Exactly one waitForTimeout, inside the pause helper, driven by a variable.
-  const sleeps = spec.split("waitForTimeout").length - 1;
-  assert.equal(sleeps, 1,
-    `expected one waitForTimeout (the pause helper), found ${sleeps}`);
+  // Every waitForTimeout lives in a NAMED HELPER, never inline in a step.
+  // There are two, and each is a deliberate viewing or timing aid rather than
+  // a way of waiting for the application:
+  //   pause()                - so a person can watch the replay
+  //   waitLikeTheTesterDid() - so the tester's own pacing is reproduced
   assert.ok(spec.includes("await page.waitForTimeout(stepPauseMs)"),
-    "the only sleep must be the viewing pause, driven by stepPauseMs");
-  assert.ok(!spec.includes("waitForTimeout(3000)"),
-    "a literal sleep leaked into a step; steps must derive their own waits");
+    "the viewing pause must be driven by stepPauseMs");
+  assert.ok(spec.includes("Math.round(ms / replaySpeed)"),
+    "the recorded gap must be scaled by REPLAY_SPEED, not hard-coded");
+
+  const stepBody = spec.slice(spec.indexOf("// [00:00] step 1"));
+  assert.ok(!stepBody.includes("waitForTimeout"),
+    `a raw sleep leaked into a step; steps call the named helpers:\n${stepBody}`);
 });
 
 test("the pause between steps is three seconds, and CI can switch it off", () => {
@@ -885,4 +890,52 @@ test("corrections while typing are surfaced", () => {
   assert.equal(api.describeKeystrokeCorrections(["A", "d"]), "",
     "clean typing needs no note");
   assert.equal(api.describeKeystrokeCorrections([]), "");
+});
+
+// -----------------------------------------------------------------------------
+// The tester's own pace
+//
+// "I want the script to replay as if going back in time." A replay at machine
+// speed is a different test from the one that was recorded: a token that
+// expires after ten seconds, a debounce that settles after two, a toast that
+// vanishes after five - none of them happen when every step runs 40ms after
+// the last.
+// -----------------------------------------------------------------------------
+
+test("the real gap between actions is reproduced", () => {
+  const a = makeEvent(0, "click", { locator: cssLocator("#one"), wallClockMs: 10000 });
+  const b = makeEvent(1, "click", { locator: cssLocator("#two"), wallClockMs: 14500 });
+  const spec = api.generatePlaywrightSpec(SESSION, [a, b], []);
+
+  assert.ok(spec.includes("await waitLikeTheTesterDid(4500)"),
+    `the 4.5s the tester waited was not reproduced:\n${spec}`);
+});
+
+test("a gap too short to matter is left to the viewing pause", () => {
+  const a = makeEvent(0, "click", { locator: cssLocator("#one"), wallClockMs: 10000 });
+  const b = makeEvent(1, "click", { locator: cssLocator("#two"), wallClockMs: 10150 });
+  const spec = api.generatePlaywrightSpec(SESSION, [a, b], []);
+
+  assert.ok(!spec.includes("waitLikeTheTesterDid(150)"),
+    "a 150ms gap is noise, not pacing");
+});
+
+test("an interruption is capped, and the real figure kept in a comment", () => {
+  // Someone answered the phone. Their spec must not become a four-minute pause,
+  // and the reader must still be able to put the real wait back.
+  const a = makeEvent(0, "click", { locator: cssLocator("#one"), wallClockMs: 10000 });
+  const b = makeEvent(1, "click", { locator: cssLocator("#two"), wallClockMs: 250000 });
+  const spec = api.generatePlaywrightSpec(SESSION, [a, b], []);
+
+  assert.ok(spec.includes("await waitLikeTheTesterDid(15000)"),
+    "the gap was not capped");
+  assert.ok(spec.includes("actually waited 240s here"),
+    "the real figure has to survive the cap, or it is lost");
+});
+
+test("CI can switch the pacing off without editing the file", () => {
+  const spec = api.generatePlaywrightSpec(SESSION, buildWorkedExampleTrace(), []);
+  assert.ok(spec.includes("process.env.REPLAY_SPEED ?? 1"));
+  assert.ok(spec.includes("if (replaySpeed <= 0)"),
+    "REPLAY_SPEED=0 must skip the wait entirely, not divide by zero");
 });

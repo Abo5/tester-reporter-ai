@@ -391,3 +391,22 @@ dialog p {
 .checkbox-row input {
   margin-top: 3px;
 }
+
+/* The final still. Wide, because it is the first thing worth looking at. */
+.final-shot {
+  margin: 0 0 20px 0;
+}
+
+.final-shot img {
+  display: block;
+  width: 100%;
+  max-width: 960px;
+  border: 1px solid var(--border, #d9dce3);
+  border-radius: 8px;
+}
+
+.final-shot figcaption {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--text-muted, #5c6270);
+}

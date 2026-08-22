@@ -83,6 +83,7 @@ export async function createSession(
     lastVideoDeliveryMode: "omitted",
     videoDowngradeReason: "",
     interactionCaptureDegradedReason: input.interactionCaptureDegradedReason,
+    finalScreenshotDataUrl: "",
   };
 
   await putRecord<RecordingSession>(STORE_SESSIONS, session);

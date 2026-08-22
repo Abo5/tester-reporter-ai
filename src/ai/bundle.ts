@@ -22,7 +22,11 @@ import type {
   ReportLanguage,
 } from "../shared/types";
 import { redactSensitiveData } from "./redact";
-import { prepareVideoForAI } from "./video";
+import {
+  prepareVideoForAI,
+  extractBase64Payload,
+  extractFinalFrame,
+} from "./video";
 import { formatVideoTimestamp } from "../shared/time";
 import {
   MAX_SNAPSHOTS_IN_BUNDLE,
@@ -535,6 +539,33 @@ export async function buildEvidenceBundle(
     userAgent: typeof navigator === "undefined" ? "" : navigator.userAgent,
   };
 
+  // --- The final still -----------------------------------------------------
+  //
+  // It follows the VIDEO consent, not the text redaction rules, because it is
+  // the same kind of thing: pixels, which no text redactor can clean. A page
+  // showing salaries or national ID numbers puts them in this image as surely
+  // as in the recording, and a tester who has said "never upload video" has
+  // already answered the question this asks.
+  let finalScreenshotBase64: string = "";
+  let finalScreenshotMimeType: string = "image/png";
+
+  if (input.allowVideoUpload && input.session.finalScreenshotDataUrl !== "") {
+    finalScreenshotBase64 =
+      extractBase64Payload(input.session.finalScreenshotDataUrl) ?? "";
+  } else if (input.allowVideoUpload && input.session.media !== null) {
+    // No captureVisibleTab picture. That is not a failure - it needs <all_urls>
+    // or activeTab, and a specific host grant does not satisfy it - so take the
+    // moment from the recording instead, which needs no extra permission.
+    finalScreenshotBase64 = await extractFinalFrame(
+      input.videoBlob, input.session.media.durationMs);
+    finalScreenshotMimeType = "image/jpeg";
+  } else if (input.session.finalScreenshotDataUrl !== "") {
+    truncationNotes.push(
+      "A screenshot of the final state was taken but NOT sent, because video "
+      + "upload is switched off. An image cannot be redacted the way text can, "
+      + "so it follows the same consent as the recording.");
+  }
+
   // --- Video ---------------------------------------------------------------
   const preparedVideo = await prepareVideoForAI(
     input.videoBlob,
@@ -559,6 +590,8 @@ export async function buildEvidenceBundle(
     redactionCompleted: false,
     redactionSummary: {},
     truncationNotes: truncationNotes,
+    finalScreenshotBase64: finalScreenshotBase64,
+    finalScreenshotMimeType: finalScreenshotMimeType,
     estimatedInputTokens: 0,
   };
 

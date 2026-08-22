@@ -23,6 +23,14 @@
         <div><dt>Failed requests</dt><dd id="count-failures">0</dd></div>
         <div><dt>Console errors</dt><dd id="count-errors">0</dd></div>
       </dl>
+      <!--
+        The last action, in words. A tester pressed Ctrl+F, saw nothing change,
+        and concluded it had not been noticed. A counter going from 11 to 12
+        does not say WHICH thing was noticed.
+      -->
+      <p id="last-action" class="last-action" hidden></p>
+      <dl style="display:none">
+      </dl>
     </section>
 
     <p id="error-box" class="error-box" hidden></p>

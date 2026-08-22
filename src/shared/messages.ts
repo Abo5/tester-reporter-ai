@@ -202,6 +202,16 @@ export interface StatusUpdateMessage {
   consoleErrorCount: number;
   /** Human-readable error to show in the panel, or "". */
   errorText: string;
+  /**
+   * A short label for the most recent action, e.g. 'pressed Control+f'.
+   *
+   * WHY the panel needs this and not just a count: a tester pressed Ctrl+F,
+   * saw no change anywhere in the interface, and concluded the extension had
+   * not noticed. A number going from 11 to 12 does not tell them WHICH thing
+   * was noticed; the label does, and it is the difference between trusting the
+   * recording and stopping to check it.
+   */
+  lastActionLabel: string;
 }
 
 export type ExtensionMessage =

@@ -454,3 +454,44 @@ export async function downgradeVideoToKeyFrames(
     return buildOmittedVideo(prepared.durationMs, reason);
   }
 }
+
+/**
+ * Grabs the LAST frame of a recording as a base64 JPEG.
+ *
+ * WHY this exists next to chrome.tabs.captureVisibleTab rather than instead of
+ * it: captureVisibleTab is the better picture - full quality, the real page -
+ * but it requires <all_urls> or activeTab, and a specific host grant does NOT
+ * satisfy it. Measured, not assumed: it throws "Either the '<all_urls>' or
+ * 'activeTab' permission is required" on a tab whose own origin is granted.
+ *
+ * So a session that starts from the panel rather than the shortcut, or one
+ * whose journey crossed origins and lost activeTab on the way, would have no
+ * final picture at all. The video already contains that moment. Taking it from
+ * there needs no permission that recording did not already have.
+ *
+ * Returns "" when there is no video or the frame cannot be read; the caller
+ * treats that as "no screenshot", which is a normal state.
+ */
+export async function extractFinalFrame(
+  videoBlob: Blob | null,
+  durationMs: number,
+): Promise<string> {
+  if (videoBlob === null || durationMs <= 0) {
+    return "";
+  }
+
+  // A shade before the end. Seeking to exactly the duration lands past the last
+  // decodable frame in some containers and yields a blank canvas.
+  const offsetMs: number = Math.max(0, durationMs - 250);
+
+  try {
+    const extracted = await extractKeyFrames(videoBlob, [offsetMs]);
+    if (extracted.frames.length === 0) {
+      return "";
+    }
+    return extracted.frames[0];
+  } catch (extractError: unknown) {
+    logWarning("video", "Could not extract the final frame.", extractError);
+    return "";
+  }
+}

@@ -495,6 +495,29 @@ function renderReport(
  * warning is seen before the recording, when it is still abstract. This one is
  * seen next to the result, which is when it explains what they are looking at.
  */
+function renderFinalScreenshot(session: RecordingSession): void {
+  const figure = document.getElementById("final-shot") as HTMLElement | null;
+  const image = document.getElementById("final-shot-image") as HTMLImageElement | null;
+  if (figure === null || image === null) {
+    return;
+  }
+
+  if (session.finalScreenshotDataUrl === "") {
+    figure.hidden = true;
+    return;
+  }
+
+  image.src = session.finalScreenshotDataUrl;
+  figure.hidden = false;
+}
+
+/**
+ * Shows the tester, on the review page, that this recording has a hole in it.
+ *
+ * WHY it is repeated here after the side panel already warned: the side panel
+ * warning is seen before the recording, when it is still abstract. This one is
+ * seen next to the result, which is when it explains what they are looking at.
+ */
 function renderDegradationWarning(session: RecordingSession): void {
   const box = document.getElementById("degraded-box") as HTMLElement | null;
   if (box === null) {
@@ -1094,6 +1117,7 @@ async function initialiseReviewPage(): Promise<void> {
     );
     renderRedactionSummary(state.session.redactionSummary);
     renderDegradationWarning(state.session);
+    renderFinalScreenshot(state.session);
     return;
   }
 

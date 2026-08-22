@@ -19,7 +19,12 @@ import {
 import { coalesceEventsForCodegen, nextEventAfter } from "./coalesce-events";
 import { buildFailureComment, buildClosingAssertions } from "./assertions";
 import { formatVideoTimestamp } from "../shared/time";
-import { DEFAULT_STEP_PAUSE_MS, TYPING_DELAY_MS } from "../shared/constants";
+import {
+  DEFAULT_STEP_PAUSE_MS,
+  TYPING_DELAY_MS,
+  MAX_REPLAYED_GAP_MS,
+  MIN_REPLAYED_GAP_MS,
+} from "../shared/constants";
 
 /**
  * Escapes a recorded URL for waitForURL, which treats a string as a GLOB.
@@ -55,6 +60,7 @@ const INDENT: string = "  ";
 function generateStatementsForEvent(
   event: RecordedEvent,
   nextEvent: RecordedEvent | null,
+  previousEvent: RecordedEvent | null,
   stepNumber: number,
   networkEntries: NetworkEntry[],
   allEvents: RecordedEvent[],
@@ -68,6 +74,12 @@ function generateStatementsForEvent(
     INDENT + "// [" + formatVideoTimestamp(event.videoOffsetMs) + "] step "
     + String(stepNumber),
   );
+
+  // The tester's own pause before this action, reproduced.
+  const gapLines: string[] = buildRealGapLines(event, previousEvent);
+  for (let index = 0; index < gapLines.length; index = index + 1) {
+    lines.push(gapLines[index]);
+  }
 
   if (event.locator !== null) {
     const comments: string[] = buildLocatorComments(event.locator);
@@ -343,6 +355,57 @@ export function describeMousePath(pathValue: string): string {
     + "px travelled";
 }
 
+
+/**
+ * The lines that reproduce how long the tester actually waited before an
+ * action.
+ *
+ * WHY the recorded gap and not a fixed pause: a replay at machine speed is a
+ * different test from the one that was recorded. A token that expires after ten
+ * seconds, a debounce that settles after two, a toast that vanishes after five,
+ * a poll that only fires once a minute - none of them reproduce when every step
+ * runs 40 milliseconds after the last. The tester's pace is part of the
+ * evidence.
+ *
+ * The gap is capped: someone who answered the phone mid-session should not turn
+ * their spec into a four-minute pause. When it is capped the real figure goes
+ * in a comment, so a reader who needs it can put it back.
+ *
+ * Scaled by REPLAY_SPEED so the same file can be run at full speed in CI
+ * without editing it.
+ */
+export function buildRealGapLines(
+  event: RecordedEvent,
+  previousEvent: RecordedEvent | null,
+): string[] {
+  if (previousEvent === null) {
+    return [];
+  }
+
+  const gapMs: number = event.wallClockMs - previousEvent.wallClockMs;
+  if (gapMs < MIN_REPLAYED_GAP_MS) {
+    return [];
+  }
+
+  const lines: string[] = [];
+
+  if (gapMs > MAX_REPLAYED_GAP_MS) {
+    lines.push(
+      INDENT + "// The tester actually waited "
+      + String(Math.round(gapMs / 1000))
+      + "s here. Capped to " + String(Math.round(MAX_REPLAYED_GAP_MS / 1000))
+      + "s so one interruption does not stall the whole replay; restore the "
+      + "real figure if the defect depends on the wait.");
+    lines.push(
+      INDENT + "await waitLikeTheTesterDid(" + String(MAX_REPLAYED_GAP_MS) + ");");
+    return lines;
+  }
+
+  lines.push(
+    INDENT + "await waitLikeTheTesterDid(" + String(Math.round(gapMs)) + ");");
+  return lines;
+}
+
 /**
  * The lines that let a person WATCH the replay.
  *
@@ -378,6 +441,19 @@ export function buildPaceHelperLines(): string[] {
   lines.push(INDENT + "  if (stepPauseMs > 0) {");
   lines.push(INDENT + "    await page.waitForTimeout(stepPauseMs);");
   lines.push(INDENT + "  }");
+  lines.push(INDENT + "};");
+  lines.push("");
+  lines.push(INDENT + "// Reproduces how long the TESTER waited before each");
+  lines.push(INDENT + "// step. A defect that needs a token to expire, a");
+  lines.push(INDENT + "// debounce to settle or a toast to vanish does not");
+  lines.push(INDENT + "// appear at machine speed. REPLAY_SPEED=0 skips all of");
+  lines.push(INDENT + "// it; REPLAY_SPEED=2 replays at double speed.");
+  lines.push(INDENT + "const replaySpeed = Number(process.env.REPLAY_SPEED ?? 1);");
+  lines.push(INDENT + "const waitLikeTheTesterDid = async (ms: number): Promise<void> => {");
+  lines.push(INDENT + "  if (replaySpeed <= 0) {");
+  lines.push(INDENT + "    return;");
+  lines.push(INDENT + "  }");
+  lines.push(INDENT + "  await page.waitForTimeout(Math.round(ms / replaySpeed));");
   lines.push(INDENT + "};");
   lines.push("");
 
@@ -451,6 +527,7 @@ export function generatePlaywrightSpec(
     const statementLines: string[] = generateStatementsForEvent(
       event,
       nextEvent,
+      index === 0 ? null : usableEvents[index - 1],
       stepNumber,
       networkEntries,
       usableEvents,

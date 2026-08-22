@@ -320,3 +320,16 @@ label[for="note-input"] {
 .grant-card button {
   width: 100%;
 }
+
+/* The running commentary. Quiet, but it must change on every single action. */
+.last-action {
+  margin: 10px 0 0 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--surface-alt, rgba(127, 127, 127, 0.10));
+  font-size: 12px;
+  color: var(--text-muted, #5c6270);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

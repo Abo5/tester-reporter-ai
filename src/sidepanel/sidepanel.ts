@@ -26,6 +26,7 @@ interface PanelElements {
   countFailures: HTMLElement;
   countErrors: HTMLElement;
   errorBox: HTMLElement;
+  lastAction: HTMLElement;
   grantCard: HTMLElement;
   grantBody: HTMLElement;
   grantButton: HTMLButtonElement;
@@ -71,6 +72,7 @@ function collectElements(): PanelElements {
     countFailures: requireElement("count-failures"),
     countErrors: requireElement("count-errors"),
     errorBox: requireElement("error-box"),
+    lastAction: requireElement("last-action"),
     grantCard: requireElement("grant-card"),
     grantBody: requireElement("grant-body"),
     grantButton: requireElement<HTMLButtonElement>("grant-button"),
@@ -145,10 +147,18 @@ function renderStatus(
   networkFailureCount: number,
   consoleErrorCount: number,
   errorText: string,
+  lastActionLabel: string,
 ): void {
   currentStatus = status;
   lastReportedDurationMs = recordedDurationMs;
   lastReportAtMs = Date.now();
+
+  if (status === "recording" && lastActionLabel !== "") {
+    elements.lastAction.hidden = false;
+    elements.lastAction.textContent = "Last: " + lastActionLabel;
+  } else {
+    elements.lastAction.hidden = true;
+  }
 
   applyStatusClass(status);
   elements.statusLabel.textContent = statusLabelFor(status);
@@ -371,6 +381,7 @@ function installHandlers(): void {
       message.networkFailureCount,
       message.consoleErrorCount,
       message.errorText,
+      message.lastActionLabel,
     );
   });
 
@@ -425,7 +436,7 @@ async function initialisePanel(): Promise<void> {
 
   installGrantHandler();
 
-  renderStatus("idle", 0, 0, 0, 0, "");
+  renderStatus("idle", 0, 0, 0, 0, "", "");
   await renderGrantWarning();
   await renderSessionList();
   await renderStorageWarning();

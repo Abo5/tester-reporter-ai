@@ -443,6 +443,16 @@ function assertBundleShape(bundle: AIEvidenceBundle): void {
     }
   }
 
+  // An image is pixels: the gate cannot inspect it, and the ONLY thing it can
+  // guarantee is that the field is what it claims to be. Whether it is sent at
+  // all is decided by the video consent, in buildEvidenceBundle.
+  if (typeof bundle.finalScreenshotBase64 !== "string") {
+    throw new Error(
+      "The evidence bundle field 'finalScreenshotBase64' is not a string, so "
+      + "what would be sent to the model could not be established.",
+    );
+  }
+
   if (typeof bundle.playwrightScript !== "string") {
     throw new Error(
       "The evidence bundle field 'playwrightScript' is not a string, so it "

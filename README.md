@@ -209,6 +209,20 @@ Every direct action, in the session and in the generated script:
 | Select, check, uncheck | ✅ | `.selectOption()`, `.check()` |
 | Scroll, state-changing hover | ✅ | comment / `.hover()` |
 
+**The script replays at your pace.** Each step waits the time you actually
+waited before it — `await waitLikeTheTesterDid(4500)`. A replay at machine speed
+is a different test: a token that expires after ten seconds, a debounce that
+settles after two, a toast that vanishes after five, none of them happen when
+every step runs 40ms after the last. Gaps are capped at 15s so one interruption
+does not stall the run, and `REPLAY_SPEED=0` turns the pacing off for CI
+(`REPLAY_SPEED=2` runs at double speed).
+
+**A picture of the final state goes in the report.** The moment you stop
+recording is the moment the defect is on screen — it is why you stopped. It is
+taken with `captureVisibleTab` when Chrome allows it, and from the last frame of
+the recording when it does not, and it follows the same upload consent as the
+video because an image cannot be redacted the way text can.
+
 Typing replays key by key rather than through `fill()` on purpose: `fill()` sets
 the value and fires one event, so an autocomplete that fires on the third
 character or a validator that runs on keyup never happens — and a script built

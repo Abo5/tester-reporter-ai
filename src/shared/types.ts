@@ -382,6 +382,20 @@ export interface RecordingSession {
   /** Human-readable note about any video downgrade. */
   videoDowngradeReason: string;
   /**
+   * A PNG of the page as it looked the moment recording stopped, as a data URL.
+   *
+   * WHY a still image when there is already a video: the final frame is where
+   * the defect is visible, and it is the one piece of evidence a person can
+   * take in without scrubbing a three-minute recording. It also survives the
+   * cases where the video does not - a machine that cannot capture, a session
+   * where the tester turned video off, a report generated after the video was
+   * deleted to save space.
+   *
+   * Empty when the tab could not be captured, which is normal: a chrome://
+   * page, a tab that closed first, or a site with no grant and no activeTab.
+   */
+  finalScreenshotDataUrl: string;
+  /**
    * Set when the session ran without a host grant for the site.
    *
    * WHY it is stored on the session and not merely warned about in the panel:
@@ -501,6 +515,16 @@ export interface AIEvidenceBundle {
   redactionSummary: Record<string, number>;
   /** Set when truncation dropped steps, so the model knows about the gap. */
   truncationNotes: string[];
+  /**
+   * Base64 PNG of the page the moment recording stopped, without the data-URL
+   * prefix. "" when the tab could not be captured.
+   *
+   * Sent to the model as its own image part and shown in the report, because
+   * the final frame is where the defect is - it is why the tester stopped.
+   */
+  finalScreenshotBase64: string;
+  /** "image/png" from captureVisibleTab, "image/jpeg" from a video frame. */
+  finalScreenshotMimeType: string;
   /** Rough token estimate computed locally before sending. */
   estimatedInputTokens: number;
 }

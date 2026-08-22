@@ -196,6 +196,8 @@ function buildBundle() {
     redactionCompleted: false,
     redactionSummary: {},
     truncationNotes: [],
+    finalScreenshotBase64: "",
+    finalScreenshotMimeType: "image/png",
     estimatedInputTokens: 0,
   };
 }

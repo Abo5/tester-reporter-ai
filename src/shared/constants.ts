@@ -207,6 +207,27 @@ export const ESTIMATED_TOKENS_PER_KEY_FRAME: number = 300;
 export const DEFAULT_STEP_PAUSE_MS: number = 3000;
 
 /**
+ * Longest real pause reproduced in the generated script, in milliseconds.
+ *
+ * The script now waits the time the tester ACTUALLY waited between actions, so
+ * a replay reproduces their pace - which matters, because a defect that only
+ * appears when a session token expires, or when a debounce settles, or when the
+ * tester stared at a screen for ten seconds before the toast disappeared, does
+ * not reproduce at machine speed.
+ *
+ * Capped, because a tester who answered the phone mid-session should not turn
+ * their spec into a four-minute pause. Anything longer than this is emitted as
+ * the cap plus a comment saying what the real gap was, so the reader can put it
+ * back if the defect depends on it.
+ */
+export const MAX_REPLAYED_GAP_MS: number = 15000;
+
+/**
+ * Shortest real gap worth emitting. Below this, the pause helper covers it.
+ */
+export const MIN_REPLAYED_GAP_MS: number = 400;
+
+/**
  * Delay between characters when the generated script types, in milliseconds.
  *
  * Non-zero on purpose. The point of typing character by character rather than
