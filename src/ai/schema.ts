@@ -12,11 +12,13 @@ import { NOT_DETERMINABLE_SENTENCE } from "../shared/constants";
 /**
  * The response schema.
  *
- * VERIFY: which JSON Schema keywords this API actually honours. In particular
- * confirm whether `required`, `enum`, property ordering and nested `object`
- * types are supported for schema-constrained output. Anything unsupported is
- * silently ignored, which turns a hard guarantee into a hope — and the reason
- * validate.ts exists anyway is that a schema constrains SHAPE, not MEANING.
+ * CONFIRMED against the live API: `required`, `enum` and nested `object` types
+ * are all honoured for schema-constrained output, including on requests that
+ * carry video.
+ *
+ * validate.ts still matters regardless: a schema constrains SHAPE, not MEANING.
+ * It cannot stop a model returning an empty string for every field, or setting
+ * a flag that contradicts the sentence beside it.
  */
 export const BUG_REPORT_RESPONSE_SCHEMA: Record<string, unknown> = {
   type: "object",

@@ -19,16 +19,20 @@ const api = await import("../../dist-test/test-api.mjs");
 const API_KEY = (process.env.GEMINI_API_KEY ?? "").trim();
 const HAVE_KEY = API_KEY !== "";
 
-/** A real recording produced by the browser suite, if one is around. */
-const CAPTURE_PATH = path.resolve(
-  "/tmp/claude-1000/-home-panda-Desktop-Tester-Reporter-AI",
-  "45e7ecad-a1fd-42ee-aae6-f084392d2708/scratchpad/cap.mp4");
+/** A real recording produced by the browser suite. See e2e/video.e2e.mjs. */
+const CAPTURE_PATH = path.resolve(".artifacts", "capture.mp4");
+const CAPTURE_TYPE_PATH = path.resolve(".artifacts", "capture.type.txt");
 
 let videoBytes = null;
+let videoType = "video/mp4";
+
 
 before(() => {
   if (fs.existsSync(CAPTURE_PATH)) {
     videoBytes = fs.readFileSync(CAPTURE_PATH);
+  }
+  if (fs.existsSync(CAPTURE_TYPE_PATH)) {
+    videoType = fs.readFileSync(CAPTURE_TYPE_PATH, "utf8").trim();
   }
 });
 
@@ -42,12 +46,12 @@ test("the Files API upload path works against the real service", async (t) => {
     return;
   }
 
-  const blob = new Blob([videoBytes], { type: "video/mp4" });
-  console.log(`  uploading ${blob.size} bytes as video/mp4`);
+  const blob = new Blob([videoBytes], { type: videoType });
+  console.log(`  uploading ${blob.size} bytes as ${videoType}`);
 
   let fileUri;
   try {
-    fileUri = await api.uploadVideoToFilesApi(API_KEY, blob, "video/mp4");
+    fileUri = await api.uploadVideoToFilesApi(API_KEY, blob, videoType);
   } catch (uploadError) {
     assert.fail(
       "the Files API upload failed. This is the function whose header names, "

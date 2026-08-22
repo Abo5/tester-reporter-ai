@@ -41,10 +41,11 @@ import { formatBytes } from "../shared/time";
  * We compare only the part before ";codecs=", because the recorded type is
  * always the long form.
  *
- * VERIFY the assumed list in shared/constants.ts against current Gemini video
- * documentation. If video/webm is not accepted and the browser cannot record
- * MP4, every session silently takes the key-frame path — which works, but you
- * would want to know that is what is happening.
+ * video/mp4 is CONFIRMED accepted - a real recording was sent inline and via
+ * the Files API, and analysed. The rest of the list in shared/constants.ts is
+ * still assumed; video/webm in particular has never been tested, because
+ * Chromium 149 always chose MP4 for recording. A wrong entry sends that session
+ * down the key-frame path, which works but is worth knowing about.
  */
 export function isVideoMimeTypeSupported(recordedMimeType: string): boolean {
   const baseMimeType: string =

@@ -86,10 +86,10 @@ async function recordWebRequestEntry(
 /**
  * Registers the observational webRequest listeners.
  *
- * VERIFY: that details.statusCode is populated in onCompleted under MV3 with
- * host permissions only, and that no extraInfoSpec is required for it. Only the
- * BLOCKING webRequest variants were removed in MV3, so observation should still
- * work — but confirm rather than assume.
+ * CONFIRMED: details.statusCode IS populated in onCompleted under MV3 with host
+ * permissions only, and no extraInfoSpec is needed - only the BLOCKING
+ * webRequest variants were removed. Verified by capturing a real 500 from both
+ * the fixture server and the OrangeHRM demo.
  *
  * NOTE: if the extension only holds optional host permissions that the tester
  * has not granted, these listeners simply never fire. That is a supported,

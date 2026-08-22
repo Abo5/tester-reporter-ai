@@ -47,7 +47,7 @@ been run, and they are settled.
 | V3 | Exact parameter names for structured JSON output (`responseMimeType` + `responseSchema` under `generationConfig`) | Gemini API structured-output docs | ✅ **CONFIRMED** by live test |
 | V4 | Parameter name for thinking / reasoning level, and whether this model has one | Gemini API docs | ⬜ still open |
 | V5 | Supported video MIME types and max duration | Gemini API video docs | ✅ **CONFIRMED** — a real `video/mp4;codecs=vp9,opus` recording was accepted and analysed |
-| V6 | Inline base64 threshold vs. Files API, and the upload flow | Gemini API files docs | ✅ **CONFIRMED** — inline works; the resumable upload reaches ACTIVE, is readable by `file_uri`, and deletes. Retention window still unread. |
+| V6 | Inline base64 threshold vs. Files API, and the upload flow | Gemini API files docs | ✅ **CONFIRMED** — inline works; the resumable upload of a real browser recording reaches ACTIVE, is readable by `file_uri`, and deletes. Retention window still unread. |
 | V7 | Current price per 1M input tokens, per 1M output tokens, and how video seconds are tokenised | Gemini API pricing page | ⬜ still open |
 | V8 | `chrome.offscreen` reason enum values (`USER_MEDIA`, `DISPLAY_MEDIA`, `BLOBS`, …) | Chrome offscreen API docs | ✅ **CONFIRMED** — offscreen document created successfully under test |
 | V9 | `chrome.tabCapture.getMediaStreamId()` signature + the `getUserMedia` constraint shape used to consume the stream ID | Chrome tabCapture docs + offscreen recording sample | ✅ **ANSWERED** — requires prior invocation (activeTab); host permissions do not satisfy it. A keyboard command counts as an invocation, and the constraint shape is confirmed working up to the compositor. |

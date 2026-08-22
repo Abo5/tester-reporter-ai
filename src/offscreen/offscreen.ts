@@ -68,10 +68,10 @@ let activeRecordingMimeType: string = "";
  * API and by every player, but Chrome only gained MP4 recording relatively
  * recently, so WebM must remain the fallback.
  *
- * VERIFY: run MediaRecorder.isTypeSupported() in YOUR target Chrome, and check
- * the chosen type against the API's supported-video list. If neither MP4 nor
- * WebM is accepted by the model, the key-frame fallback in ai/video.ts is what
- * saves the feature.
+ * CONFIRMED on Chromium 149: this list resolves to
+ * "video/mp4;codecs=vp9,opus", and that recording was accepted and analysed by
+ * the model. Still worth re-running isTypeSupported() on a different Chrome
+ * before assuming the same choice - it is a runtime probe for a reason.
  */
 function chooseRecordingMimeType(): string {
   for (let index = 0; index < PREFERRED_RECORDING_MIME_TYPES.length; index = index + 1) {
@@ -86,10 +86,11 @@ function chooseRecordingMimeType(): string {
 /**
  * Turns a tabCapture stream id into a real MediaStream.
  *
- * VERIFY: this constraint shape. The mandatory.chromeMediaSource form is a
- * long-standing Chrome-specific extension to getUserMedia and is what the
- * official offscreen-recording sample uses, but it is non-standard and the
- * exact key names must be confirmed against current documentation.
+ * CONFIRMED working on Chromium 149. The mandatory.chromeMediaSource form is a
+ * long-standing Chrome-specific extension to getUserMedia; Chromium translates
+ * it internally to {"mediaStreamSource":{"exact":["tab"]}}, which is visible in
+ * its media_stream logs. It is still non-standard, so treat a future failure
+ * here as a possible dialect change rather than a code bug.
  */
 async function openTabStream(
   tabStreamId: string,

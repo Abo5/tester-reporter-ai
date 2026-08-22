@@ -13,10 +13,10 @@
  * a dropdown; the Gemini client falls back to DEFAULT_MODEL_ID if a stored
  * value is not on this list.
  *
- * VERIFY: every id below. As of the author's knowledge cutoff (May 2026) the
- * existence of "gemini-3.5-flash" could NOT be confirmed. Check the official
- * model list and replace these strings with real ids before shipping. This is
- * the only place they appear.
+ * CONFIRMED: "gemini-3.5-flash" exists and is multimodal - it has answered
+ * live requests carrying text, page code and video. An earlier version of this
+ * comment warned it might not exist, which was true when written and is not now.
+ * This is still the only place a model id appears.
  */
 export const SUPPORTED_MODELS: readonly string[] = [
   "gemini-3.5-flash",
@@ -26,7 +26,7 @@ export const SUPPORTED_MODELS: readonly string[] = [
 export const DEFAULT_MODEL_ID: string = "gemini-3.5-flash";
 
 /**
- * VERIFY: the base URL and version path against current Gemini documentation.
+ * CONFIRMED working: https://generativelanguage.googleapis.com/v1beta.
  */
 export const GEMINI_API_BASE: string = "https://generativelanguage.googleapis.com";
 export const GEMINI_API_VERSION: string = "v1beta";
@@ -106,9 +106,10 @@ export const RECORDER_CHUNK_INTERVAL_MS: number = 2000;
 
 /**
  * Container/codec preference order.
- * VERIFY: run MediaRecorder.isTypeSupported() in YOUR target Chrome. MP4 is far
- * more likely to be accepted by a multimodal API and by every player, but
- * Chrome gained MP4 recording relatively recently.
+ * CONFIRMED on Chromium 149: the first entry is supported and produces
+ * "video/mp4;codecs=vp9,opus", which the model accepts. The list is still
+ * probed at runtime rather than assumed, because an older Chrome will fall
+ * through to WebM.
  */
 export const PREFERRED_RECORDING_MIME_TYPES: readonly string[] = [
   'video/mp4;codecs="avc1.42E01E,mp4a.40.2"',
@@ -137,9 +138,13 @@ export const KEY_FRAME_MAX_WIDTH: number = 1280;
 
 /**
  * MIME types we believe the model accepts.
- * VERIFY THIS ENTIRE LIST against current Gemini video documentation. If
- * video/webm is not on it and the browser cannot record MP4, every session
- * silently takes the key-frame path, which works but you would want to know.
+ * PARTIALLY CONFIRMED: video/mp4 is accepted - a real recording was sent inline
+ * and via the Files API, and analysed. The other three entries are still
+ * assumptions; in particular video/webm has never been tested, because
+ * Chromium 149 always chose MP4 for recording.
+ *
+ * If an entry here is wrong, that session silently takes the key-frame path -
+ * which works, but you would want to know.
  */
 export const ASSUMED_SUPPORTED_VIDEO_MIME_TYPES: readonly string[] = [
   "video/mp4",

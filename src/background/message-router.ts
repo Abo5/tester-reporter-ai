@@ -248,8 +248,10 @@ async function reportError(context: string, error: unknown): Promise<void> {
  * version, and the callback form always is. Wrapping it once here means the
  * rest of the code can await it regardless.
  *
- * VERIFY: the exact signature, and whether this call must happen in direct
- * response to a user gesture, against the current tabCapture documentation.
+ * ANSWERED by testing: the callback signature below is correct, and the call
+ * does NOT need a gesture of its own - but the extension must have been INVOKED
+ * on the tab (the activeTab rule). Host permissions do not satisfy it. See the
+ * keyboard command in service-worker.ts, which exists for exactly this.
  */
 function requestTabStreamId(tabId: number): Promise<string> {
   return new Promise<string>(function executor(resolve, reject): void {
@@ -309,9 +311,10 @@ function describeCaptureFailure(captureError: unknown): string {
  * to the service worker and extension pages, not to an offscreen document, so
  * the worker mints the id and hands it over.
  *
- * VERIFY: whether getMediaStreamId must be called in direct response to a user
- * gesture. Our understanding is that the extension must have been invoked on
- * the tab, which the side-panel button click satisfies.
+ * ANSWERED by testing: no gesture is needed at THIS call, but the extension
+ * must have been INVOKED on the tab first - an icon click or the keyboard
+ * command. Host permissions do not satisfy the rule, and the grant is revoked
+ * when the tab navigates.
  */
 async function handleStartRecording(
   tabId: number,

@@ -10,9 +10,9 @@ import { NOT_DETERMINABLE_SENTENCE } from "../shared/constants";
 /**
  * The system instruction.
  *
- * VERIFY: the exact field name for a system instruction in the current API. If
- * the field does not exist for this model, prepend this text as the first user
- * part instead — the wording does not change.
+ * CONFIRMED: sent as `systemInstruction: { parts: [{ text }] }` and honoured.
+ * If a future model drops the field, prepend this text as the first user part
+ * instead — the wording does not change.
  */
 export const SYSTEM_INSTRUCTION: string = [
   "You are a senior QA engineer at a software company in Saudi Arabia. You write defect",

@@ -89,9 +89,10 @@ export async function deleteMediaForSession(sessionId: string): Promise<number> 
  * QuotaExceededError six minutes into a session destroys the tester's work.
  * Refusing to start costs them five seconds.
  *
- * VERIFY: navigator.storage.estimate() availability and accuracy in an
- * extension context. It is a standard API but its numbers are deliberately
- * imprecise, so we only use it for a coarse go / no-go decision.
+ * navigator.storage.estimate() is available in an extension context and returns
+ * usable numbers - CONFIRMED in the options page and the pre-record guard. Its
+ * values are deliberately imprecise by design, which is why they are only used
+ * for a coarse go / no-go decision and never shown as an exact figure.
  */
 export async function readQuotaStatus(): Promise<QuotaStatus> {
   if (navigator.storage === undefined

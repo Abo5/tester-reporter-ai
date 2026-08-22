@@ -12,3 +12,6 @@ dist-test/
 !.env.example
 roundtrip-tmp-*/
 test-results/
+
+# Real browser recordings produced by the video suite for the live test.
+.artifacts/

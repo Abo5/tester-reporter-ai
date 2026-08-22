@@ -13,11 +13,10 @@ const OFFSCREEN_DOCUMENT_PATH: string = "offscreen/offscreen.html";
 /**
  * True when our offscreen document already exists.
  *
- * VERIFY: chrome.runtime.getContexts() availability in your target Chrome. It
- * is the modern way to ask; older builds exposed chrome.offscreen.hasDocument()
- * instead. If getContexts is missing we fall back to attempting creation and
- * treating the "already exists" error as success, which is why createOffscreen
- * below swallows that specific case.
+ * CONFIRMED working on Chromium 149. Older builds exposed
+ * chrome.offscreen.hasDocument() instead, so if getContexts is missing we fall
+ * back to attempting creation and treating the "already exists" error as
+ * success - which is why the creator below swallows that specific case.
  */
 export async function isOffscreenDocumentOpen(): Promise<boolean> {
   const runtimeWithContexts = chrome.runtime as unknown as {
@@ -42,10 +41,10 @@ export async function isOffscreenDocumentOpen(): Promise<boolean> {
 /**
  * Creates the offscreen document if it is not already open.
  *
- * VERIFY: the exact reason enum members. We use USER_MEDIA (for the microphone
- * and the tab stream) and BLOBS (for holding the recording while it is written
- * to storage). If the names differ in your Chrome version, fix them here: this
- * is the only place they appear.
+ * CONFIRMED: USER_MEDIA (for the microphone and the tab stream) and BLOBS (for
+ * holding the recording while it is written to storage) are accepted, and the
+ * document is created and records successfully. If the names differ in a future
+ * Chrome, fix them here: this is the only place they appear.
  */
 export async function ensureOffscreenDocument(): Promise<void> {
   const alreadyOpen: boolean = await isOffscreenDocumentOpen();

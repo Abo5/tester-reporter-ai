@@ -2,10 +2,17 @@
 // src/ai/gemini.ts
 // The only file that talks to Google.
 //
-// EVERYTHING here is VERIFY territory: endpoint paths, header names, body field
-// names, the upload handshake and the response envelope all change between
-// Gemini releases. Make one real call by hand and write down what came back
-// BEFORE trusting a line of this file.
+// Everything here was written from memory and has since been CONFIRMED against
+// the live API by tests/live/*.live.mjs: the endpoint path, the request body
+// shape, the structured-output parameter names, the response envelope, and the
+// two-step Files API upload - the last of which now runs in a test.
+//
+// Two things are still unconfirmed because nothing has triggered them: the
+// safety-block response shape, and the pricing and token-rate constants in
+// shared/constants.ts.
+//
+// These surfaces do change between Gemini releases, so treat a sudden failure
+// here as a possible API change rather than a code bug.
 //
 // It never throws for an expected failure. Every expected failure has a UI
 // state that must still show the tester their video and their script, so the
@@ -143,8 +150,8 @@ export async function uploadVideoToFilesApi(
   const uploadUrl: string | null = startResponse.headers.get("x-goog-upload-url");
   if (uploadUrl === null || uploadUrl === "") {
     throw new Error(
-      "The upload start response did not contain an upload URL. VERIFY the "
-      + "header name against current documentation.");
+      "The upload start response did not contain an upload URL. The header "
+      + "name may have changed; check it against current documentation.");
   }
 
   const uploadResponse: Response = await fetch(uploadUrl, {
@@ -166,8 +173,8 @@ export async function uploadVideoToFilesApi(
 
   if (fileUri === undefined || fileUri === "") {
     throw new Error(
-      "The upload response did not contain a file URI. VERIFY the response "
-      + "shape against current documentation.");
+      "The upload response did not contain a file URI. The response shape may "
+      + "have changed; check it against current documentation.");
   }
 
   logInfo("gemini", "Video uploaded: " + fileUri);
@@ -205,10 +212,13 @@ export async function deleteUploadedFile(
 /**
  * Builds the request body.
  *
- * VERIFY: every field name in this object, especially the structured-output
- * ones. Google has renamed this area between releases: responseMimeType,
- * response_mime_type, responseSchema and response_json_schema have all existed
- * at various points, and the accepted subset of JSON Schema has changed.
+ * CONFIRMED against the live API: systemInstruction, contents[].parts[],
+ * inline_data, file_data, and generationConfig.responseMimeType +
+ * responseSchema all work as written, with video parts included.
+ *
+ * Google has renamed this area between releases - response_mime_type and
+ * response_json_schema have both existed - so a sudden 400 here is worth
+ * checking against current documentation before assuming a code bug.
  */
 function buildRequestBody(
   bundle: AIEvidenceBundle,
@@ -255,7 +265,9 @@ function buildRequestBody(
 /**
  * Pulls the model's text out of the response envelope.
  *
- * VERIFY: candidates[0].content.parts[0].text is the shape assumed here.
+ * CONFIRMED: candidates[0].content.parts[].text is the shape the API returns.
+ * Parts are concatenated because a long JSON response can be split across
+ * several of them.
  */
 function extractResponseText(responseJson: unknown): string {
   const typed = responseJson as {
@@ -394,7 +406,7 @@ export async function generateBugReport(
   let requestBody: Record<string, unknown> =
     buildRequestBody(workingBundle, fileUri);
 
-  // VERIFY: the path and the ":generateContent" method suffix.
+  // CONFIRMED working: /v1beta/models/{model}:generateContent.
   const endpointUrl: string =
     GEMINI_API_BASE + "/" + GEMINI_API_VERSION + "/models/"
     + modelId + ":generateContent";

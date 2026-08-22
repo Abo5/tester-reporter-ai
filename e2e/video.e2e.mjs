@@ -15,6 +15,13 @@
 
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+
+/** Where a real recording is left for the live Files API test to pick up. */
+const CAPTURE_DIRECTORY = path.resolve(".artifacts");
+const CAPTURE_PATH = path.join(CAPTURE_DIRECTORY, "capture.mp4");
+const CAPTURE_TYPE_PATH = path.join(CAPTURE_DIRECTORY, "capture.type.txt");
 import {
   launchWithExtension, readStore, openExtensionPage, waitFor, readRecordingState,
   callExtension, sendBrowserShortcut,
@@ -214,6 +221,38 @@ test("recording started by shortcut captures actual video", async (t) => {
   console.log(`  blob read back: ${JSON.stringify(readable)}`);
   assert.ok(readable.ok, "the stored Blob could not be read back");
   assert.ok(readable.bytes > 1000, "the stored Blob is empty");
+
+  // WHAT: write the recording out to .artifacts/capture.mp4.
+  // WHY: the live Files API test needs a REAL browser recording, and there is
+  // no other way to get one. It used to read a hand-made file from a temporary
+  // directory, which meant it skipped silently on every machine but the one it
+  // was written on. Producing the file here makes the documented order --
+  // `npm run test:e2e:video` then `npm run test:live` -- actually true.
+  const exported = await extensionPage.evaluate(async (mediaId) => {
+    const db = await new Promise((resolve, reject) => {
+      const request = indexedDB.open("tester-reporter-ai");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const record = await new Promise((resolve, reject) => {
+      const tx = db.transaction("media", "readonly");
+      const req = tx.objectStore("media").get(mediaId);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    const buffer = await record.blob.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    for (let index = 0; index < bytes.length; index += 1) {
+      binary += String.fromCharCode(bytes[index]);
+    }
+    return { base64: btoa(binary), type: record.blob.type };
+  }, session.media.mediaId);
+
+  fs.mkdirSync(CAPTURE_DIRECTORY, { recursive: true });
+  fs.writeFileSync(CAPTURE_PATH, Buffer.from(exported.base64, "base64"));
+  fs.writeFileSync(CAPTURE_TYPE_PATH, exported.type);
+  console.log(`  wrote ${CAPTURE_PATH} (${exported.type})`);
 
   await page.close();
 });
