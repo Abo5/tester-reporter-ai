@@ -628,6 +628,41 @@ export async function reconcileStuckSessions(): Promise<void> {
 }
 
 /**
+ * Starts or stops recording from the keyboard shortcut.
+ *
+ * Toggling rather than two separate commands, because a tester mid-session has
+ * their hands on the page, not on a panel, and one key that means "begin" then
+ * "end" is the smallest thing to remember.
+ */
+export async function handleToggleRecordingCommand(
+  tab: chrome.tabs.Tab | undefined,
+): Promise<void> {
+  const state: ActiveRecordingState | null = await readActiveState();
+
+  if (state !== null) {
+    await handleStopRecording();
+    return;
+  }
+
+  let tabId: number | undefined = tab?.id;
+  if (tabId === undefined) {
+    const activeTabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    tabId = activeTabs[0]?.id;
+  }
+  if (tabId === undefined) {
+    await reportError("router", new Error("No active tab to record."));
+    return;
+  }
+
+  const settings = await readSettings();
+  try {
+    await handleStartRecording(tabId, settings.captureMicrophone);
+  } catch (startError: unknown) {
+    await reportError("router", startError);
+  }
+}
+
+/**
  * Deletes recordings older than the tester's retention setting.
  *
  * Runs at startup rather than on a timer: a QA tester's browser is restarted

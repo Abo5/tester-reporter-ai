@@ -96,6 +96,14 @@ async function openTabStream(tabStreamId: string): Promise<MediaStream> {
   // chromeMediaSourceId are Chrome-only constraint keys that do not exist in
   // the standard MediaTrackConstraints type, so the object cannot be typed
   // accurately without inventing a shape TypeScript would reject anyway.
+  // ONLY the Chrome-specific source keys go in `mandatory`.
+  //
+  // An earlier version also put maxWidth / maxHeight / maxFrameRate in this
+  // legacy block. Those keys are long deprecated, so the size limits are now
+  // applied to the track afterwards with the standard applyConstraints() API
+  // instead. (Testing showed this was not what caused capture to fail - the
+  // audio track was - but mixing deprecated constraint dialects in a call this
+  // fragile is not worth the risk.)
   const chromeConstraints = {
     audio: {
       mandatory: {
@@ -107,14 +115,62 @@ async function openTabStream(tabStreamId: string): Promise<MediaStream> {
       mandatory: {
         chromeMediaSource: "tab",
         chromeMediaSourceId: tabStreamId,
-        maxWidth: TARGET_VIDEO_WIDTH,
-        maxHeight: TARGET_VIDEO_HEIGHT,
-        maxFrameRate: TARGET_FRAME_RATE,
       },
     },
   } as unknown as MediaStreamConstraints;
 
-  return await navigator.mediaDevices.getUserMedia(chromeConstraints);
+  let stream: MediaStream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia(chromeConstraints);
+  } catch (captureError: unknown) {
+    // Retry WITHOUT tab audio.
+    //
+    // A machine with no audio output device - a CI container, a headless test
+    // runner, some locked-down corporate images - fails the whole request with
+    // "NotFoundError: Requested device not found", because the audio half
+    // cannot be satisfied. Refusing to record video at all because the tab had
+    // no sound to capture is the wrong trade, so ask again for video only.
+    logWarning("offscreen",
+      "Tab capture with audio failed; retrying video only.", captureError);
+
+    const videoOnlyConstraints = {
+      video: {
+        mandatory: {
+          chromeMediaSource: "tab",
+          chromeMediaSourceId: tabStreamId,
+        },
+      },
+    } as unknown as MediaStreamConstraints;
+
+    stream = await navigator.mediaDevices.getUserMedia(videoOnlyConstraints);
+  }
+
+  await limitVideoTrackSize(stream);
+  return stream;
+}
+
+/**
+ * Applies the capture size and frame rate with the STANDARD constraint API.
+ *
+ * Failure here is deliberately non-fatal: a slightly larger recording is a cost
+ * problem, whereas refusing to record is a lost session.
+ */
+async function limitVideoTrackSize(stream: MediaStream): Promise<void> {
+  const videoTracks: MediaStreamTrack[] = stream.getVideoTracks();
+  if (videoTracks.length === 0) {
+    return;
+  }
+  try {
+    await videoTracks[0].applyConstraints({
+      width: { max: TARGET_VIDEO_WIDTH },
+      height: { max: TARGET_VIDEO_HEIGHT },
+      frameRate: { max: TARGET_FRAME_RATE },
+    });
+  } catch (constraintError: unknown) {
+    logWarning("offscreen",
+      "Could not limit the capture size; recording at the tab's own size.",
+      constraintError);
+  }
 }
 
 /**

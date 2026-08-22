@@ -17,7 +17,8 @@
     "test:e2e:display": "npm run build && node --test --test-concurrency=1 e2e/*.e2e.mjs",
     "test:e2e:site": "npm run build && xvfb-run -a --server-args='-screen 0 1280x900x24' node --test --test-concurrency=1 e2e/orangehrm.e2e.mjs",
     "test:e2e:ai": "npm run build && xvfb-run -a --server-args='-screen 0 1280x900x24' node --env-file-if-exists=.env --test --test-concurrency=1 e2e/full-pipeline.e2e.mjs",
-    "test:all": "npm run verify && npm run test:e2e && npm run test:e2e:site && npm run test:live && npm run test:e2e:ai"
+    "test:all": "npm run verify && npm run test:e2e && npm run test:e2e:video && npm run test:e2e:site && npm run test:live && npm run test:e2e:ai",
+    "test:e2e:video": "npm run build && xvfb-run -a --server-args='-screen 0 1280x900x24' bash -c 'openbox --sm-disable & sleep 1; exec node --test --test-concurrency=1 e2e/video.e2e.mjs'"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

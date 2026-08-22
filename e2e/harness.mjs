@@ -35,11 +35,21 @@ export async function launchWithExtension(options = {}) {
       "--disable-dev-shm-usage",
       "--no-first-run",
       "--no-default-browser-check",
-      // Grant getUserMedia without a prompt, and feed it a synthetic device so
-      // the microphone path can be exercised on a machine with no hardware.
+      // Force the X11 backend. On a Wayland desktop Chromium may pick the
+      // Wayland ozone platform and ignore DISPLAY entirely, which leaves no
+      // X11 window for xdotool to focus - and therefore no way to deliver a
+      // real browser-level keyboard shortcut.
+      "--ozone-platform=x11",
+      // Grant getUserMedia without a prompt so the microphone path can run on a
+      // machine with no hardware.
+      //
+      // NOTE: --use-fake-device-for-media-stream is deliberately NOT set here.
+      // It substitutes a synthetic camera/microphone, and it also interferes
+      // with tabCapture's chromeMediaSource:"tab" constraint, which resolves to
+      // a NotFoundError when a fake device is in play.
       "--use-fake-ui-for-media-stream",
-      "--use-fake-device-for-media-stream",
       "--autoplay-policy=no-user-gesture-required",
+
       ...(options.extraArgs ?? []),
     ],
     ...options.contextOptions,
@@ -135,4 +145,69 @@ export async function waitFor(description, predicate, timeoutMs = 20000, interva
     await new Promise((r) => setTimeout(r, intervalMs));
   }
   throw new Error(`Timed out waiting for: ${description} (last value: ${JSON.stringify(lastValue)})`);
+}
+
+/**
+ * Sends a REAL keyboard shortcut to the browser window via the X server.
+ *
+ * WHY not page.keyboard.press(): Playwright dispatches key events into the
+ * RENDERER through CDP, so the page sees them but the browser never does.
+ * Extension commands are handled by the browser, not the page, which makes
+ * them unreachable that way - and the extension command is the only thing a
+ * harness can use to grant the activeTab permission tabCapture requires.
+ *
+ * xdotool injects at the X level, so the event travels the same path a real
+ * keypress does. Three things all have to be true for it to work, which is why
+ * this returns false rather than throwing:
+ *   - a window manager is running (no _NET_ACTIVE_WINDOW without one);
+ *   - Chromium is on the X11 backend, not Wayland (see --ozone-platform above);
+ *   - xdotool is installed.
+ * Callers skip honestly when it returns false rather than reporting coverage
+ * they do not have.
+ */
+export async function sendBrowserShortcut(keys) {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const run = promisify(execFile);
+
+  // --onlyvisible is the more precise query but reports nothing under some
+  // bare window managers, so fall back to the broader one.
+  const searches = [
+    ["search", "--onlyvisible", "--class", "chrom"],
+    ["search", "--class", "chrom"],
+    ["search", "--classname", "chrom"],
+  ];
+
+  let windowId = "";
+  for (const args of searches) {
+    try {
+      const { stdout } = await run("xdotool", args);
+      const ids = stdout.split("\n").map((l) => l.trim()).filter(Boolean);
+      if (ids.length > 0) {
+        windowId = ids[ids.length - 1];
+        break;
+      }
+    } catch (searchError) {
+      // Try the next strategy.
+    }
+  }
+
+  if (windowId === "") {
+    return false;
+  }
+
+  try {
+    await run("xdotool", ["windowactivate", "--sync", windowId]);
+    await new Promise((r) => setTimeout(r, 600));
+
+    // Deliberately WITHOUT --window. That flag makes xdotool use XSendEvent,
+    // and Chromium - like most X clients - ignores synthetic events delivered
+    // that way. Without it xdotool uses the XTEST extension, which produces a
+    // real input event indistinguishable from a physical keypress. That
+    // distinction is the whole difference between this working and not.
+    await run("xdotool", ["key", "--clearmodifiers", keys]);
+    return true;
+  } catch (sendError) {
+    return false;
+  }
 }

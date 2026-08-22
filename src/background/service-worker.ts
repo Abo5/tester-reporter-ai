@@ -12,6 +12,7 @@ import {
   broadcastStatus,
   reconcileStuckSessions,
   runRetentionCleanup,
+  handleToggleRecordingCommand,
 } from "./message-router";
 import { installNavigationListeners } from "./navigation-listener";
 import { installNetworkListeners } from "./network-listener";
@@ -85,6 +86,34 @@ function configureSidePanel(): void {
 }
 
 /**
+ * Registers the keyboard shortcut that starts and stops recording.
+ *
+ * WHY this exists, beyond convenience: Chrome grants activeTab when the user
+ * INVOKES the extension, and a registered keyboard command counts as an
+ * invocation. tabCapture requires that grant and host permissions do not
+ * satisfy it, so the shortcut is the most reliable way for a tester to arm
+ * video capture on the page they are already looking at - no hunting for the
+ * toolbar icon, and no navigation in between to revoke the grant.
+ */
+function installKeyboardCommands(): void {
+  if (chrome.commands === undefined) {
+    logWarning("worker", "chrome.commands is unavailable in this browser.");
+    return;
+  }
+
+  chrome.commands.onCommand.addListener(function onCommand(
+    command: string,
+    tab?: chrome.tabs.Tab,
+  ): void {
+    if (command !== "toggle-recording") {
+      return;
+    }
+    logInfo("worker", "Extension invoked by keyboard shortcut.");
+    void handleToggleRecordingCommand(tab);
+  });
+}
+
+/**
  * Registers everything. Called once, synchronously, at worker start.
  */
 function initialiseServiceWorker(): void {
@@ -92,6 +121,7 @@ function initialiseServiceWorker(): void {
   installNavigationListeners();
   installNetworkListeners();
   configureSidePanel();
+  installKeyboardCommands();
 
   chrome.runtime.onInstalled.addListener(function onInstalled(): void {
     logInfo("worker", "Extension installed or updated.");
