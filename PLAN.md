@@ -7951,3 +7951,93 @@ So `MediaRecorder` output, the WebM/MP4 choice (V12), the microphone-from-offscr
 question (V10), the Files API upload and the accepted video MIME types (V5, V6) remain
 open. They are one manual run away: load `dist/`, press `Ctrl+Shift+E` on a normal page,
 interact, press it again, and look at the review page.
+
+---
+
+## 22. Adversarial review — what a second pair of eyes found
+
+After the browser suite was green, five independent reviewers went over the code — one per
+dimension: the redaction gate, the MV3 lifecycle, interaction capture, codegen, and the AI
+pipeline. Every candidate finding was then attacked by three more agents, each with a
+different job: *refute it*, *judge whether it matters to a real tester*, and *check whether
+it is already handled*. A finding survived only if it beat at least two of the three.
+
+It surfaced **one critical defect that would have broken the product's headline feature**,
+and fifteen more real ones. Every fix below was verified by reading the code or running it
+first — several plausible-sounding reports turned out to be wrong about what the code does,
+and were dropped.
+
+### 22.1 The one that mattered most
+
+**Every successful recording threw its video away.**
+
+`createSession` starts `media.state` at `"not-started"`. On a *successful* capture nothing
+ever changed it — `offscreen/ready` was logged and discarded. `handleStopRecording`
+consults that state to decide whether there is a recorder to wait for, so it always took
+the no-recorder path, finalised immediately, and closed the offscreen document before it
+could hand over the Blob.
+
+The video is the first artifact this product promises. It would never have arrived in
+production, and the whole browser suite could not see it: capture cannot succeed in a
+headless environment, so only the *failed* branch was ever exercised.
+
+### 22.2 The rest, grouped by what they cost
+
+**Secrets that reached the network**
+
+| | |
+|---|---|
+| `significanceReason` embedded the raw page URL and was never redacted | A `?access_token=…` URL had the token stripped from `pageUrl` and sent in full in the sentence beside it. Now comes with a **structural guard**: a test that plants a secret in *every* string of a populated bundle and reports the exact path of any survivor. Checking one field at a time is how this survived. |
+| The labelled-secret rule missed `{"password":"admin123"}` and `#access_token=…` | A quote between label and colon broke the first; `\btoken\b` does not match inside `access_token` because `_` is a word character. A login body and an OAuth callback are exactly where a secret appears, so missing both made the rule close to decorative. |
+| The generated script was redacted by value shape only | The action trace is also redacted by *field name*, so a value typed into "Verification Code" was stripped from the trace and left in the `fill()` beside it. A six-digit code matches no value pattern at all. |
+
+**Data lost or corrupted**
+
+| | |
+|---|---|
+| `putRecord` resolved on request success, not transaction commit | A quota failure writing a 60 MB Blob aborts *after* the request succeeds, so `storeMediaBlob` returned an id for a Blob that was never written. |
+| A late `offscreen/error` tore down whichever session was active | A message from a *previous* session ended the recording in progress, for no visible reason. |
+| Pause was not on the serialisation queue | A capture handler already in flight wrote its stale state back over a pause, un-pausing the event recorder while the MediaRecorder stayed paused — so events were recorded into a video that had stopped advancing, and every timestamp after it was wrong. |
+| Key-frame timestamps used `offsets.slice(0, frames.length)` | That assumes every failed seek was at the end. One failure in the middle shifted every later label, so the model was told the wrong moment for each frame. |
+
+**Specs that would not compile or would not run**
+
+| | |
+|---|---|
+| A newline in a fallback value went into a `//` comment | Everything after it became code. A multi-line button label is enough. |
+| `getByRole` was given the raw `role` attribute | Its parameter is a *union* of ARIA role names, so an invented role produced red squiggles before the tester changed anything. |
+| The closing assertion asserted a clicked element was visible after the page navigated away | It fails on a session that worked perfectly — the worst kind of generated assertion, because it teaches the tester the tool lies. |
+| `waitForURL` was given a string, which Playwright treats as a **glob** | A recorded URL routinely contains `?` and `*`, both wildcards there. |
+| A `url-change` step poisoned the pre-await flag | It emits a `waitForURL` for *itself*, which set the flag to the *next* step's URL and silently deleted that navigation. |
+
+**Evidence that was wrong or missing**
+
+| | |
+|---|---|
+| A click on an icon *inside* a button recorded the icon | `.locator('path')` — useless — while the button beside it had a test id and an accessible name. Icon buttons are in essentially every modern app, so this was most of the clicks in a real session. |
+| The clicked element's own HTML was empty when it was CSS-hidden | A custom checkbox is a visually-hidden `<input>` beside a styled `<span>`, so the most important evidence field was blank for exactly the controls that need explaining. |
+| SVG subtrees were serialised because tag tables are upper-case and SVG tagNames are not | Several hundred empty tags on an icon-heavy page. |
+| The not-determinable sentence was compared byte-exact | It contains an em dash. A model emitting a hyphen failed validation, burned the retry, and showed a hard failure for a substantively correct report — and this is the *most common* Expected Behavior outcome for content defects. |
+
+**Things that felt broken**
+
+| | |
+|---|---|
+| Two quadratic scans made capture add **195 ms to every click** | Measured in a real Chromium on a 3,621-element page. Capture runs synchronously *ahead of the application's own handler*, so that is lag the tester feels — on exactly the large enterprise pages this exists for. Now 59 ms, with `npm run test:e2e:perf` as the guard, verified to go red at 195 ms. |
+| The patched `fetch` awaited the cloned body before returning | It turned every streamed response into a buffered one and delayed every request the page makes. A QA tool must not change the timing of what it measures. |
+| A 400 while carrying video said "check your API key" | Exactly the wrong advice when the key is fine and the *video* was rejected. It now retries once without it. |
+| Regenerate redisplayed the tester's *old* edited text | A paid request that appeared to do nothing. |
+| Escape on the consent dialog stranded the panel | `close` fires without any button being pressed; the panel stayed on "Preparing the evidence…" with no way back but a reload. |
+| A hash-route back navigation fired both `popstate` and `hashchange` | The same step recorded twice, and two waits emitted for one navigation. |
+
+### 22.3 What this says about the testing that came before
+
+The 93 offline tests and 11 browser tests were all green when this review started. They
+were not weak tests — they caught real things and they still guard real behaviour. But
+every one of them was written by the same person who wrote the code, and they therefore
+tested the cases that person had already thought about.
+
+The `significanceReason` leak is the clearest example: there were nine redaction tests, and
+all nine happened to look at a different field. The fix that matters is not the one-line
+patch, it is the structural test that now plants a secret in *every* string and walks the
+result — the class of check that does not depend on someone remembering a field exists.

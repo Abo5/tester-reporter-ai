@@ -31,10 +31,18 @@ it** — in English and in Arabic RTL. `npm run test:e2e:site` does the same
 against the real OrangeHRM demo. `npm run test:e2e:ai` proves the whole chain
 once: real capture → real redaction → real Gemini → rendered report.
 
-That testing found **eleven defects the 93 offline tests could not**, including
-one that silently dropped a recorded step every time a tester typed a value and
-pressed Enter. Section 20 of PLAN.md lists all eleven and why each was invisible
-offline.
+That testing found **eleven defects the offline tests could not**, including one
+that silently dropped a recorded step every time a tester typed a value and
+pressed Enter. Section 20 of PLAN.md lists all eleven.
+
+An **adversarial review** afterwards — five independent reviewers, each finding
+attacked by three more — found **sixteen more**, including one that threw the
+video away on every successful recording. Section 22 has the full list. The
+lesson worth keeping: nine redaction tests were green while a raw page URL
+carrying an access token went to the API in a field none of them happened to
+look at. The fix that matters is not the patch, it is the structural test that
+now plants a secret in *every* string of the bundle and reports where it
+survived.
 
 **The video path is armed but not completed under test.** Chrome only allows
 tab capture after the user *invokes* the extension, which is why there is now a
@@ -69,7 +77,7 @@ The same page is in [`fixtures/bench.html`](fixtures/bench.html) and is what
 
 ```bash
 npm install
-npm run verify        # typecheck + build + 85 tests
+npm run verify        # typecheck + build + 117 tests
 ```
 
 Then in Chrome, Edge or Brave:
@@ -109,6 +117,7 @@ the written report needs one.
 | `npm run test:e2e` | 11 tests in a real Chromium, including the graded bench and the replay round-trip |
 | `npm run test:e2e:site` | Against the real OrangeHRM demo application |
 | `npm run test:e2e:video` | The media path, under Xvfb with a window manager |
+| `npm run test:e2e:perf` | Capture overhead per click on a 600-row page |
 | `npm run test:live` | Five checks against the real Gemini API. Needs a key in `.env` |
 | `npm run test:e2e:ai` | The whole chain once: capture → redaction → Gemini → rendered report |
 | `npm run test:all` | Everything above, in order |
@@ -298,7 +307,7 @@ current documentation.
 
 Five layers, cheapest first. Only the first is required to work on the project.
 
-**93 offline unit tests** (`npm test`) — no browser, no key, no network. jsdom is
+**117 offline unit tests** (`npm test`) — no browser, no key, no network. jsdom is
 a test-only dependency.
 
 The load-bearing one is in [`tests/prune-dom.test.mjs`](tests/prune-dom.test.mjs):
