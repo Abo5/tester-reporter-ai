@@ -224,6 +224,42 @@ function readBoundingBox(element: Element): BoundingBox {
 }
 
 /**
+ * Serialises the interacted element itself, even when it is visually hidden.
+ *
+ * The normal pruning policy drops a hidden element that has no text, which is
+ * right for a page snapshot and wrong here: a custom checkbox is almost always
+ * a visually-hidden <input> with a styled <span> next to it, and elementHtml is
+ * the one field that answers "what did the tester actually touch". Returning
+ * empty there left the most important evidence blank for exactly the controls
+ * that need explaining.
+ */
+function captureElementHtml(element: Element): string {
+  const pruned: string = pruneElementSubtree(element, MAX_ELEMENT_HTML_CHARACTERS);
+  if (pruned !== "") {
+    return pruned;
+  }
+
+  // Fall back to the element's own tag with its attributes, built by hand so a
+  // hidden control is still described.
+  const attributes: string[] = [];
+  for (let index = 0; index < element.attributes.length; index = index + 1) {
+    const attribute: Attr = element.attributes[index];
+    if (attribute.name === "style" || attribute.name === "class") {
+      continue;
+    }
+    const value: string = attribute.value.length > 200
+      ? attribute.value.slice(0, 200) + "…"
+      : attribute.value;
+    attributes.push(attribute.name + '="' + value.split('"').join("&quot;") + '"');
+  }
+
+  const tagName: string = element.tagName.toLowerCase();
+  const attributeText: string =
+    attributes.length === 0 ? "" : " " + attributes.join(" ");
+  return "<" + tagName + attributeText + ' data-qa-hidden="true"></' + tagName + ">";
+}
+
+/**
  * Captures the complete bounded context for one interacted element.
  */
 export function captureElementContext(element: Element): ElementContext {
@@ -239,7 +275,7 @@ export function captureElementContext(element: Element): ElementContext {
     id: createId(),
     sessionId: "",  // Filled in by the service worker, which owns session state.
     eventIndex: -1, // Filled in by the service worker.
-    elementHtml: pruneElementSubtree(element, MAX_ELEMENT_HTML_CHARACTERS),
+    elementHtml: captureElementHtml(element),
     ancestorHtml: ancestorHtml,
     ancestorDepth: ancestorResult.depth,
     siblingHtml: collectSiblingHtml(element),

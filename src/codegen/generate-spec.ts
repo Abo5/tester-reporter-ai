@@ -20,6 +20,28 @@ import { coalesceEventsForCodegen, nextEventAfter } from "./coalesce-events";
 import { buildFailureComment, buildClosingAssertions } from "./assertions";
 import { formatVideoTimestamp } from "../shared/time";
 
+/**
+ * Escapes a recorded URL for waitForURL, which treats a string as a GLOB.
+ *
+ * A recorded URL routinely contains ? and *, and both are glob wildcards there:
+ * waitForURL('/x?tenant=TN-1') would also match '/xAtenant=TN-1'. Passing a
+ * regular expression instead means the spec waits for the URL that was actually
+ * recorded.
+ */
+function urlAsRegExpLiteral(url: string): string {
+  let escaped: string = "";
+  const specials: string = "\\^$.*+?()[]{}|/";
+  for (let index = 0; index < url.length; index = index + 1) {
+    const character: string = url.charAt(index);
+    if (specials.includes(character)) {
+      escaped = escaped + "\\" + character;
+    } else {
+      escaped = escaped + character;
+    }
+  }
+  return "/^" + escaped + "$/";
+}
+
 const INDENT: string = "  ";
 
 /**
@@ -66,7 +88,8 @@ function generateStatementsForEvent(
     if (event.type === "navigate") {
       lines.push(INDENT + "await page.goto(" + quote(event.pageUrl) + ");");
     } else {
-      lines.push(INDENT + "await page.waitForURL(" + quote(event.pageUrl) + ");");
+      lines.push(INDENT + "await page.waitForURL("
+        + urlAsRegExpLiteral(event.pageUrl) + ");");
     }
   } else if (event.type === "reload") {
     lines.push(INDENT + "await page.reload();");
@@ -134,7 +157,8 @@ function generateStatementsForEvent(
     && nextEvent.wallClockMs - event.wallClockMs < 5000;
 
   if (causedNavigation && nextEvent !== null) {
-    lines.push(INDENT + "await page.waitForURL(" + quote(nextEvent.pageUrl) + ");");
+    lines.push(INDENT + "await page.waitForURL("
+      + urlAsRegExpLiteral(nextEvent.pageUrl) + ");");
     preAwaitedNextUrl.value = nextEvent.pageUrl;
   }
 

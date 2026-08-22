@@ -368,7 +368,7 @@ export async function generateBugReport(
     }
   }
 
-  const requestBody: Record<string, unknown> =
+  let requestBody: Record<string, unknown> =
     buildRequestBody(workingBundle, fileUri);
 
   // VERIFY: the path and the ":generateContent" method suffix.
@@ -379,6 +379,7 @@ export async function generateBugReport(
   let lastRawText: string = "";
   let lastValidationProblems: string[] = [];
   let hasRetriedForBadOutput: boolean = false;
+  let hasRetriedWithoutVideo: boolean = false;
 
   try {
     for (let attempt = 1; attempt <= MAX_API_ATTEMPTS; attempt = attempt + 1) {
@@ -429,10 +430,38 @@ export async function generateBugReport(
         continue;
       }
 
-      // --- 4xx: retrying a rejected request just wastes time. --------------
+      // --- 4xx: retrying the SAME request just wastes time. ----------------
       if (response.status === 400 || response.status === 401
           || response.status === 403 || response.status === 404) {
         const errorText: string = await response.text();
+
+        // A 400 while carrying video is usually about the VIDEO - too long,
+        // wrong codec, over a size limit - not about the key. Retry once
+        // without it rather than telling the tester to check settings that are
+        // correct while a usable report sits one attempt away.
+        const carriedVideo: boolean =
+          workingBundle.video.deliveryMode !== "omitted";
+
+        if (response.status === 400 && carriedVideo && !hasRetriedWithoutVideo) {
+          hasRetriedWithoutVideo = true;
+          logWarning("gemini",
+            "400 while sending video; retrying without it.", errorText.slice(0, 300));
+
+          workingBundle = {
+            ...workingBundle,
+            video: {
+              ...workingBundle.video,
+              deliveryMode: "omitted",
+              downgradeReason:
+                "The AI service rejected the request while it carried the "
+                + "video, so the report was written from the page code and the "
+                + "action script only.",
+            },
+          };
+          requestBody = buildRequestBody(workingBundle, "");
+          continue;
+        }
+
         return {
           kind: "http-error",
           statusCode: response.status,
@@ -498,8 +527,13 @@ export async function generateBugReport(
         };
       }
 
+      // Key frames are NOT video. A report claiming it analysed the video when
+      // it was given six stills should be corrected, because "the spinner never
+      // stopped" cannot be concluded from stills and the tester needs to know
+      // which claim they are reading.
       const videoWasSent: boolean =
-        workingBundle.video.deliveryMode !== "omitted";
+        workingBundle.video.deliveryMode === "files-api-uri"
+        || workingBundle.video.deliveryMode === "inline-base64";
       const networkOrConsoleWasSent: boolean =
         workingBundle.networkFailures.length > 0
         || workingBundle.consoleErrors.length > 0;

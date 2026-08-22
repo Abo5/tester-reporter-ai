@@ -972,11 +972,27 @@ function installHandlers(): void {
     void runReportGeneration(false);
   });
 
-  consentCancel.addEventListener("click", function onConsentCancel(): void {
-    consentDialog.close();
+  /** Restores the panel after the dialog is dismissed, however it was dismissed. */
+  function restorePanelAfterConsentDismissed(): void {
+    if (isGenerating) {
+      return;   // A choice was made and generation is already under way.
+    }
     reportActions.hidden = false;
     reportStatusText.textContent =
       "No report generated yet. Your video and your Playwright script are ready.";
+  }
+
+  consentCancel.addEventListener("click", function onConsentCancel(): void {
+    consentDialog.close();
+    restorePanelAfterConsentDismissed();
+  });
+
+  // A <dialog> can also be dismissed with Escape, which fires `close` without
+  // any of our buttons being pressed. Without this the panel stayed on
+  // "Preparing the evidence…" with the Generate button hidden, and the tester
+  // had no way back other than reloading the page.
+  consentDialog.addEventListener("close", function onDialogClosed(): void {
+    restorePanelAfterConsentDismissed();
   });
 
   window.addEventListener("beforeunload", function onUnload(): void {

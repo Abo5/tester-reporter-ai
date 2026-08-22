@@ -394,12 +394,30 @@ function patchHistoryApi(): void {
     return result;
   };
 
+  // A back navigation on a hash route fires BOTH popstate and hashchange, and
+  // reporting both recorded the same step twice - which then forced codegen to
+  // emit two waits for one navigation. Report whichever arrives first and
+  // ignore the other for a moment.
+  let lastUrlChangeReportedAtMs: number = 0;
+  let lastUrlChangeReported: string = "";
+
+  function reportUrlChangeOnce(changeKind: string): void {
+    const now: number = Date.now();
+    const currentUrl: string = window.location.href;
+    if (currentUrl === lastUrlChangeReported && now - lastUrlChangeReportedAtMs < 250) {
+      return;
+    }
+    lastUrlChangeReported = currentUrl;
+    lastUrlChangeReportedAtMs = now;
+    reportUrlChange(changeKind);
+  }
+
   window.addEventListener("popstate", function onPopState(): void {
-    reportUrlChange("popstate");
+    reportUrlChangeOnce("popstate");
   });
 
   window.addEventListener("hashchange", function onHashChange(): void {
-    reportUrlChange("hashchange");
+    reportUrlChangeOnce("hashchange");
   });
 }
 

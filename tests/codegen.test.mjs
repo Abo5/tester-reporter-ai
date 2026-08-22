@@ -183,10 +183,15 @@ test("a click that caused a navigation gets a real waitForURL", () => {
   const spec = api.generatePlaywrightSpec(
     SESSION, buildWorkedExampleTrace(), FAILING_REQUEST);
 
-  assert.ok(
-    spec.includes("await page.waitForURL('https://staging.example.sa/services?tenant=TN-40192');"),
-    "expected a derived wait after the key press that changed the URL",
-  );
+  // A regular expression, not a quoted string: waitForURL treats a string as a
+  // GLOB, and a recorded URL routinely contains ? and *, which are wildcards
+  // there.
+  assert.ok(spec.includes("await page.waitForURL(/^"),
+    "expected a derived wait after the key press that changed the URL");
+  assert.ok(spec.includes("tenant=TN-40192"),
+    `the waited-for URL is wrong:\n${spec}`);
+  assert.ok(!spec.includes("waitForURL('http"),
+    "a raw string would be interpreted as a glob pattern");
 });
 
 test("the spec points at the request that failed right after a step", () => {
@@ -485,8 +490,8 @@ test("a url-change step does not delete the navigation that follows it", () => {
 
   const spec = api.generatePlaywrightSpec(SESSION, events, []);
 
-  assert.ok(spec.includes("waitForURL('https://x.test/a')"),
-    "the SPA route change should still be waited for");
+  assert.ok(spec.includes("waitForURL(/^https:") && spec.includes("x\\.test\\/a$/"),
+    `the SPA route change should still be waited for:\n${spec}`);
   assert.ok(spec.includes("goto('https://x.test/b')"),
     "the later navigation was silently deleted");
 });
@@ -563,4 +568,25 @@ test("a visibility assertion IS emitted when nothing navigated afterwards", () =
   const spec = api.generatePlaywrightSpec(SESSION, events, []);
   assert.ok(spec.includes("toBeVisible()"),
     "with no navigation after the click, the element is still on screen");
+});
+
+test("waitForURL gets a regex, because a string would be a glob pattern", () => {
+  // Playwright treats a waitForURL string as a GLOB. A recorded URL routinely
+  // contains ? and *, both wildcards there, so '/x?tenant=TN-1' would also
+  // match '/xAtenant=TN-1'.
+  const events = [
+    makeEvent(1, "click", { wallClockMs: 1000, locator: makeLocator() }),
+    makeEvent(2, "navigate", {
+      wallClockMs: 1400,
+      pageUrl: "https://x.test/search?q=a*b&page=1",
+    }),
+  ];
+
+  const spec = api.generatePlaywrightSpec(SESSION, events, []);
+
+  assert.ok(!/waitForURL\('/.test(spec),
+    "a raw string argument would be treated as a glob pattern");
+  assert.ok(spec.includes("waitForURL(/^"), `expected a regex literal:\n${spec}`);
+  assert.ok(spec.includes("\\?q=a\\*b"),
+    `the ? and * must be escaped so they match literally:\n${spec}`);
 });

@@ -317,3 +317,31 @@ test("the pruner does not descend into SVG icon subtrees", async () => {
   assert.ok(result.prunedHtml.includes("<svg"),
     "the svg element itself should still be visible to the model");
 });
+
+test("a visually-hidden control is still described in the evidence", async () => {
+  // A custom checkbox is almost always a visually-hidden <input> with a styled
+  // <span> beside it. The pruner drops a hidden element with no text, which is
+  // right for a page snapshot and wrong for elementHtml - the one field that
+  // answers "what did the tester actually touch".
+  installDom(`<html><body>
+    <label>
+      <input type="checkbox" id="agree" name="agree"
+             style="position:absolute;opacity:0;width:1px;height:1px" />
+      <span class="box"></span>
+      <span class="text">I agree to the terms</span>
+    </label>
+  </body></html>`);
+  const api = await import("../dist-test/test-api.mjs");
+
+  const hiddenInput = document.getElementById("agree");
+  const context = api.captureElementContext(hiddenInput);
+
+  assert.ok(context.elementHtml.length > 0,
+    "the hidden control produced NO evidence at all");
+  assert.ok(context.elementHtml.includes('type="checkbox"'),
+    `the control's type is missing: ${context.elementHtml}`);
+  assert.ok(context.elementHtml.includes('name="agree"'),
+    `the control's name is missing: ${context.elementHtml}`);
+  assert.ok(context.ancestorHtml.includes("I agree to the terms"),
+    "the visible label beside it should still be captured");
+});
