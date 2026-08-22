@@ -172,10 +172,10 @@ function handleBridgeMessage(event: MessageEvent): void {
 function reportFrameInventory(): void {
   const iframes: NodeListOf<HTMLIFrameElement> =
     document.querySelectorAll("iframe");
-  if (iframes.length === 0) {
-    return;
-  }
 
+  // Report even an EMPTY inventory. "No iframes right now" and "nobody ever
+  // told me" are different facts, and the consumer used to treat the second as
+  // the first and fall back to a positional guess.
   const frames: FrameInventoryEntry[] = [];
   for (let index = 0; index < iframes.length; index = index + 1) {
     const iframe: HTMLIFrameElement = iframes[index];
@@ -198,6 +198,66 @@ function reportFrameInventory(): void {
   }
 
   void sendMessageIgnoringNoReceiver({ kind: "content/frame-inventory", frames: frames });
+}
+
+/** Pending re-scan, so a burst of DOM changes causes one report, not fifty. */
+let frameInventoryTimerId: number = 0;
+
+/**
+ * Re-reports the iframe inventory when the set of iframes changes.
+ *
+ * WHY it is needed: a single-page application mounts an iframe when the tester
+ * opens the panel that contains it, long after the document loaded. Without
+ * this, that frame is never in the inventory and a click inside it produces a
+ * frame selector derived from an opaque frame id.
+ */
+function watchForFrameChanges(): void {
+  if (document.body === null || typeof MutationObserver !== "function") {
+    return;
+  }
+
+  const observer: MutationObserver = new MutationObserver(
+    function onMutation(records: MutationRecord[]): void {
+      let sawFrameChange: boolean = false;
+
+      for (let index = 0; index < records.length && !sawFrameChange;
+           index = index + 1) {
+        const record: MutationRecord = records[index];
+        sawFrameChange = containsIframe(record.addedNodes)
+          || containsIframe(record.removedNodes);
+      }
+
+      if (!sawFrameChange) {
+        return;
+      }
+
+      window.clearTimeout(frameInventoryTimerId);
+      frameInventoryTimerId = window.setTimeout(function rescan(): void {
+        if (getRecordingActive()) {
+          reportFrameInventory();
+        }
+      }, 400);
+    },
+  );
+
+  observer.observe(document.body, { childList: true, subtree: true });
+}
+
+/** True when a node list contains, or contains within it, an iframe. */
+function containsIframe(nodes: NodeList): boolean {
+  for (let index = 0; index < nodes.length; index = index + 1) {
+    const node: Node = nodes[index];
+    if (!(node instanceof Element)) {
+      continue;
+    }
+    if (node.tagName === "IFRAME") {
+      return true;
+    }
+    if (node.querySelector("iframe") !== null) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // -----------------------------------------------------------------------------
@@ -269,6 +329,7 @@ async function performHandshake(): Promise<void> {
   resetSnapshotScheduler();
   takeSnapshotIfSignificant("first-load", -1);
   reportFrameInventory();
+  watchForFrameChanges();
 }
 
 /**
@@ -305,6 +366,7 @@ function handleRuntimeMessage(
       resetSnapshotScheduler();
       takeSnapshotIfSignificant("first-load", -1);
       reportFrameInventory();
+      watchForFrameChanges();
       return false;
     }
 

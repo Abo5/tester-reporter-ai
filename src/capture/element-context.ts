@@ -7,7 +7,7 @@
 
 import type { ElementContext, AriaState, BoundingBox } from "../shared/types";
 import { pruneElementSubtree } from "./prune-dom";
-import { collapseWhitespace } from "./accessible-name";
+import { collapseWhitespace, findByIdInScope } from "./accessible-name";
 import {
   MAX_ELEMENT_HTML_CHARACTERS,
   MAX_ANCESTOR_HTML_CHARACTERS,
@@ -162,8 +162,9 @@ export function collectAriaState(element: Element): AriaState {
     const idList: string[] = describedByIds.trim().split(/\s+/);
     const texts: string[] = [];
     for (let index = 0; index < idList.length; index = index + 1) {
-      const referenced: Element | null =
-        element.ownerDocument.getElementById(idList[index]);
+      // Same scoping rule as the label lookup: an id inside a shadow root must
+      // not resolve against a light-DOM element that happens to share it.
+      const referenced: Element | null = findByIdInScope(element, idList[index]);
       if (referenced !== null) {
         texts.push((referenced.textContent ?? "").trim());
       }

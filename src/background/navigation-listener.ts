@@ -93,7 +93,7 @@ export async function buildFramePath(
     const frame = chainBottomUp[index];
     framePath.push({
       frameId: frame.frameId,
-      frameSelector: selectorForFrame(frame.parentFrameId, frame.url, frame.frameId),
+      frameSelector: selectorForFrame(frame.parentFrameId, frame.url),
       frameUrl: frame.url,
     });
   }
@@ -107,11 +107,7 @@ export async function buildFramePath(
  * In that case we fall back to a positional selector and the generated spec
  * carries a comment saying the position was assumed.
  */
-function selectorForFrame(
-  parentFrameId: number,
-  frameUrl: string,
-  frameId: number,
-): string {
+function selectorForFrame(parentFrameId: number, frameUrl: string): string {
   const inventory: FrameInventoryEntry[] | undefined =
     frameInventoryByFrameId.get(parentFrameId);
   if (inventory === undefined) {
@@ -128,13 +124,15 @@ function selectorForFrame(
     }
   }
 
-  if (matches.length === 1) {
-    return matches[0].selector;
+  if (matches.length >= 1) {
+    return matches[0].selector;   // Ambiguity is warned about by codegen.
   }
-  if (matches.length > 1) {
-    return matches[0].selector;   // Ambiguous; codegen warns about it.
-  }
-  return "iframe:nth-of-type(" + String((frameId % inventory.length) + 1) + ")";
+
+  // No match. Derive the selector from the frame's own URL rather than from
+  // its id: frameId is an opaque browser-assigned number, so
+  // `iframe:nth-of-type((frameId % count) + 1)` was a guess wearing the costume
+  // of a selector, and it would silently target a DIFFERENT iframe.
+  return 'iframe[src*="' + shortUrlFragment(frameUrl) + '"]';
 }
 
 /**

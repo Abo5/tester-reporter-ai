@@ -195,6 +195,49 @@ export function collapseWhitespace(text: string): string {
 }
 
 /**
+ * The root an id reference must be resolved against.
+ *
+ * For an element inside a shadow root that is the ShadowRoot, not the document:
+ * ids there are scoped to the root, while an unrelated light-DOM element with
+ * the same id IS visible to document.getElementById. Resolving against the
+ * document therefore returns confidently wrong answers for exactly the
+ * components that were designed to be encapsulated.
+ */
+function referenceScopeFor(element: Element): Document | ShadowRoot {
+  const root: Node = element.getRootNode();
+  if (root instanceof ShadowRoot) {
+    return root;
+  }
+  return element.ownerDocument;
+}
+
+/**
+ * Looks up an id within the element's own scope. Exported so element-context
+ * can resolve aria-describedby the same way.
+ */
+export
+function findByIdInScope(element: Element, identifier: string): Element | null {
+  if (identifier === "") {
+    return null;
+  }
+  const scope: Document | ShadowRoot = referenceScopeFor(element);
+
+  // ShadowRoot has getElementById; Document does too. Guard anyway, because a
+  // DocumentFragment in some engines does not.
+  const withGetById = scope as unknown as {
+    getElementById?: (id: string) => Element | null;
+  };
+  if (typeof withGetById.getElementById === "function") {
+    return withGetById.getElementById(identifier);
+  }
+  try {
+    return scope.querySelector("#" + cssEscape(identifier));
+  } catch (selectorError: unknown) {
+    return null;
+  }
+}
+
+/**
  * Finds the visible label text for a form control, checking every mechanism a
  * real application actually uses, in the order the ARIA spec prefers.
  */
@@ -209,8 +252,7 @@ export function getAssociatedLabelText(control: Element): string {
     const idList: string[] = labelledBy.trim().split(/\s+/);
     const referencedTexts: string[] = [];
     for (let index = 0; index < idList.length; index = index + 1) {
-      const referenced: Element | null =
-        control.ownerDocument.getElementById(idList[index]);
+      const referenced: Element | null = findByIdInScope(control, idList[index]);
       if (referenced !== null) {
         referencedTexts.push((referenced.textContent ?? "").trim());
       }
@@ -224,8 +266,8 @@ export function getAssociatedLabelText(control: Element): string {
   const controlId: string = control.getAttribute("id") ?? "";
   if (controlId !== "") {
     const escapedId: string = cssEscape(controlId);
-    const labelElement: Element | null =
-      control.ownerDocument.querySelector('label[for="' + escapedId + '"]');
+    const labelElement: Element | null = referenceScopeFor(control)
+      .querySelector('label[for="' + escapedId + '"]');
     if (labelElement !== null) {
       const labelText: string = collapseWhitespace(labelElement.textContent ?? "");
       if (labelText !== "") {
@@ -262,8 +304,7 @@ export function getAccessibleName(element: Element): string {
     const idList: string[] = labelledBy.trim().split(/\s+/);
     const referencedTexts: string[] = [];
     for (let index = 0; index < idList.length; index = index + 1) {
-      const referenced: Element | null =
-        element.ownerDocument.getElementById(idList[index]);
+      const referenced: Element | null = findByIdInScope(element, idList[index]);
       if (referenced !== null) {
         referencedTexts.push((referenced.textContent ?? "").trim());
       }

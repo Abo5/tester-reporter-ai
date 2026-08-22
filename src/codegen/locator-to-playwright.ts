@@ -169,7 +169,29 @@ function candidateToExpression(candidate: LocatorCandidate): string {
  * tenant TN-40192".
  */
 export function locatorToPlaywrightExpression(locator: ElementLocator): string {
-  const frameChain: string = buildFrameChainExpression(locator.framePath);
+  let frameChain: string = buildFrameChainExpression(locator.framePath);
+
+  // Scope a structural locator to the shadow host that owns it.
+  //
+  // shadowHostSelectors was being recorded and then ignored, so a path measured
+  // inside a shadow root was emitted as if it applied to the whole page.
+  // Playwright's CSS engine pierces open shadow roots, so `button` matched
+  // every button on the page rather than the one in the component.
+  //
+  // Role- and name-based locators do not need this: they identify the element
+  // by what it is, wherever it lives.
+  const needsShadowScope: boolean =
+    locator.isInShadowDom
+    && locator.shadowHostSelectors.length > 0
+    && (locator.strategy === "css-path" || locator.strategy === "exact-text");
+
+  if (needsShadowScope) {
+    for (let index = 0; index < locator.shadowHostSelectors.length;
+         index = index + 1) {
+      frameChain = frameChain
+        + ".locator(" + quote(locator.shadowHostSelectors[index]) + ")";
+    }
+  }
 
   if (locator.isInsideRepeatedList
       && locator.listRowAnchorText !== ""

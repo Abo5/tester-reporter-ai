@@ -18,6 +18,10 @@
 // most dangerous, because it contains fill() calls with literal typed values.
 // =============================================================================
 
+import {
+  findSensitiveFieldRule,
+  type SensitiveFieldRule,
+} from "../shared/sensitive-fields";
 import type {
   AIEvidenceBundle,
   ActionTraceStep,
@@ -40,20 +44,6 @@ interface RedactionRule {
   pattern: RegExp;
   keepLabel?: boolean;
 }
-
-/**
- * Field-name patterns: if a field NAME matches, its VALUE is redacted whatever
- * the value looks like. This is the reliable half of redaction.
- */
-const SENSITIVE_FIELD_NAME_PATTERNS: readonly RedactionRule[] = [
-  { name: "password", pattern: /pass(word|wd)?|\bpwd\b/i },
-  { name: "otp", pattern: /\botp\b|one.?time|verification.?code|auth.?code|\bpin\b/i },
-  { name: "cvv", pattern: /\bcvv\b|\bcvc\b|security.?code/i },
-  { name: "card", pattern: /card.?(number|no)\b|\bpan\b|credit.?card/i },
-  { name: "iban", pattern: /\biban\b|account.?number/i },
-  { name: "national-id", pattern: /national.?id|\bnin\b|\bssn\b|iqama/i },
-  { name: "token", pattern: /token|api.?key|secret|bearer/i },
-];
 
 /**
  * Value patterns: applied to every text value regardless of field name.
@@ -139,22 +129,6 @@ function countRedaction(counter: RedactionCounter, ruleName: string): void {
     counter[ruleName] = 0;
   }
   counter[ruleName] = counter[ruleName] + 1;
-}
-
-/**
- * True when a field name, label or surrounding tag text looks sensitive.
- */
-function findSensitiveFieldRule(fieldDescription: string): RedactionRule | null {
-  for (let index = 0; index < SENSITIVE_FIELD_NAME_PATTERNS.length; index = index + 1) {
-    const rule: RedactionRule = SENSITIVE_FIELD_NAME_PATTERNS[index];
-    // A fresh RegExp each time: even non-global patterns are safer rebuilt when
-    // they are shared across a whole bundle.
-    const pattern: RegExp = new RegExp(rule.pattern.source, rule.pattern.flags);
-    if (pattern.test(fieldDescription)) {
-      return rule;
-    }
-  }
-  return null;
 }
 
 /**
@@ -312,7 +286,7 @@ export function redactHtml(
   const tagPattern: RegExp = /<[^>]*>/g;
   let result: string = html.replace(tagPattern, function onTag(tagText: string): string {
     const isPasswordInput: boolean = /type\s*=\s*"password"/i.test(tagText);
-    const rule: RedactionRule | null = findSensitiveFieldRule(tagText);
+    const rule: SensitiveFieldRule | null = findSensitiveFieldRule(tagText);
 
     if (!isPasswordInput && rule === null) {
       return tagText;
@@ -377,7 +351,7 @@ export function redactPlaywrightScript(
     // getByRole('textbox', { name: 'CVV' }), getByPlaceholder('OTP') ...
     const fillIndex: number = line.indexOf(".fill(");
     const locatorPart: string = line.slice(0, fillIndex);
-    const fieldRule: RedactionRule | null = findSensitiveFieldRule(locatorPart);
+    const fieldRule: SensitiveFieldRule | null = findSensitiveFieldRule(locatorPart);
 
     lines[index] = line.replace(
       fillPattern,

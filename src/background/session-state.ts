@@ -25,6 +25,16 @@ export interface ActiveRecordingState {
   eventCount: number;
   /** Whether the microphone was requested for this session. */
   captureMicrophone: boolean;
+  /**
+   * A warning to keep showing in the side panel, or "".
+   *
+   * It lives HERE rather than in a module variable because the service worker
+   * is terminated when idle: the variable reset to "" while the recording
+   * carried on, and the next broadcast actively erased a warning that was still
+   * true - typically the "recording without video" notice, at the exact moment
+   * the tester had stopped interacting long enough to read it.
+   */
+  errorText: string;
 }
 
 /**

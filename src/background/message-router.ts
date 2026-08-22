@@ -66,8 +66,36 @@ import { logInfo, logWarning, logError } from "../shared/logger";
 import { formatBytes } from "../shared/time";
 
 import { createId } from "../shared/ids";
-/** Error text shown in the side panel until the next status update clears it. */
-let lastErrorText: string = "";
+/**
+ * Reads the sticky warning out of the recording state.
+ *
+ * It cannot live in a module variable: the worker is terminated when idle, the
+ * variable resets, and the next broadcast erases a warning that is still true.
+ */
+async function readErrorText(): Promise<string> {
+  const state: ActiveRecordingState | null = await readActiveState();
+  if (state !== null) {
+    return state.errorText ?? "";
+  }
+  const stored: Record<string, unknown> =
+    await chrome.storage.session.get(IDLE_ERROR_KEY);
+  const value: unknown = stored[IDLE_ERROR_KEY];
+  return typeof value === "string" ? value : "";
+}
+
+/** Stores the sticky warning where a worker restart cannot lose it. */
+async function writeErrorText(text: string): Promise<void> {
+  const state: ActiveRecordingState | null = await readActiveState();
+  if (state !== null) {
+    state.errorText = text;
+    await writeActiveState(state);
+    return;
+  }
+  await chrome.storage.session.set({ [IDLE_ERROR_KEY]: text });
+}
+
+/** Where a warning lives when no session is active. */
+const IDLE_ERROR_KEY: string = "lastErrorText";
 
 // -----------------------------------------------------------------------------
 // Status broadcasting
@@ -108,7 +136,7 @@ export async function broadcastStatus(): Promise<void> {
     recordedDurationMs: recordedDurationMs,
     networkFailureCount: networkFailureCount,
     consoleErrorCount: consoleErrorCount,
-    errorText: lastErrorText,
+    errorText: await readErrorText(),
   };
 
   await sendMessageIgnoringNoReceiver(message);
@@ -203,7 +231,7 @@ async function broadcastStatusThrottled(): Promise<void> {
 
 /** Records an error to surface in the side panel, then broadcasts it. */
 async function reportError(context: string, error: unknown): Promise<void> {
-  lastErrorText = String(error);
+  await writeErrorText(String(error));
   logError(context, "Reporting to the UI.", error);
   await broadcastStatus();
 }
@@ -327,6 +355,7 @@ async function handleStartRecording(
     pauseStartedAtMs: 0,
     eventCount: 0,
     captureMicrophone: captureMicrophone,
+    errorText: "",
   };
   await writeActiveState(state);
   clearFrameInventory();
@@ -364,7 +393,7 @@ async function handleStartRecording(
       },
     });
     await closeOffscreenDocument();
-    lastErrorText = videoFailureReason;
+    await writeErrorText(videoFailureReason);
   }
 
   // Tell the already-injected content scripts in THIS TAB to begin listening.
@@ -372,7 +401,7 @@ async function handleStartRecording(
   await notifyTabOfRecordingState(tabId, "recording", sessionId);
 
   if (videoFailureReason === "") {
-    lastErrorText = "";
+    await writeErrorText("");
   }
   await broadcastStatus();
   logInfo("router", "Recording started for session " + sessionId + ".");
@@ -756,7 +785,7 @@ async function handleOffscreenFinished(
 
   await clearActiveState();
   await closeOffscreenDocument();
-  lastErrorText = "";
+  await writeErrorText("");
   await broadcastStatus();
   await openReviewPage(sessionId);
   logInfo("router", "Session " + sessionId + " is ready.");
@@ -785,7 +814,7 @@ async function handleOffscreenError(sessionId: string, reason: string): Promise<
 
   await clearActiveState();
   await closeOffscreenDocument();
-  lastErrorText = "Recording problem: " + reason;
+  await writeErrorText("Recording problem: " + reason);
   await broadcastStatus();
   await openReviewPage(sessionId);
 }

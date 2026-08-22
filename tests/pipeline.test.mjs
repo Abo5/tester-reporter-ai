@@ -578,3 +578,44 @@ test("normalisation never rewrites a real expected behaviour", () => {
   assert.equal(api.normaliseExpectedBehavior(real).expectedBehavior,
     "The tabs should read exactly as in the approved design.");
 });
+
+// --- Key-frame selection priority -------------------------------------------
+
+test("key frames keep the ends AND the most recent failure, not the six earliest", async () => {
+  // The cap used to be applied while walking a sorted list from the start, so
+  // the six EARLIEST offsets won. A five-minute session with failures at 00:30
+  // and 04:00 sent four frames of the first 32 seconds, dropped the second
+  // failure entirely, and dropped the final-state frame the docs promise.
+  const { chooseKeyFrameOffsets } = await import("../dist-test/test-api.mjs");
+
+  const events = [];
+  for (let index = 0; index < 12; index += 1) {
+    events.push({ index, videoOffsetMs: index * 25000 });   // 0 .. 275s
+  }
+  const durationMs = 300000;
+
+  // Failures near 00:50 (index 2) and near 04:10 (index 10).
+  const offsets = chooseKeyFrameOffsets(durationMs, events, [2, 10]);
+
+  assert.ok(offsets.length <= 6);
+  assert.equal(offsets[0], 0, "the first frame is a documented guarantee");
+  assert.ok(offsets[offsets.length - 1] > durationMs - 1000,
+    `the final-state frame was dropped: ${JSON.stringify(offsets)}`);
+
+  const nearLateFailure = offsets.some((o) => Math.abs(o - 250000) < 3000);
+  assert.ok(nearLateFailure,
+    `the most recent failure got no frame: ${JSON.stringify(offsets)}`);
+
+  for (let index = 1; index < offsets.length; index += 1) {
+    assert.ok(offsets[index] > offsets[index - 1],
+      "output must be chronological, the model reads it as a sequence");
+  }
+});
+
+test("with no failures the frames still span the whole session", async () => {
+  const { chooseKeyFrameOffsets } = await import("../dist-test/test-api.mjs");
+  const offsets = chooseKeyFrameOffsets(120000, [], []);
+  assert.equal(offsets[0], 0);
+  assert.ok(offsets[offsets.length - 1] > 119000);
+  assert.ok(offsets.length >= 2);
+});

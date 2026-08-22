@@ -11,12 +11,15 @@
 import type {
   RecordedEvent,
   RecordedEventType,
+  ElementLocator,
   DomSnapshot,
   ElementContext,
   SnapshotTrigger,
 } from "../shared/types";
 import { getElementSelector } from "../capture/selector";
 import { resolveInteractiveTarget } from "../capture/visibility";
+import { getAssociatedLabelText } from "../capture/accessible-name";
+import { findSensitiveFieldRule } from "../shared/sensitive-fields";
 import { captureElementContext } from "../capture/element-context";
 import { maybeTakeSnapshot } from "./snapshot-scheduler";
 import { sendMessageIgnoringNoReceiver } from "../shared/messages";
@@ -42,11 +45,27 @@ interface PendingInput {
   element: Element;
   latestValue: string;
   flushTimerId: number;
+  /** Everything volatile, captured at the FIRST keystroke, not at flush. */
+  pageUrl: string;
+  pageTitle: string;
+  startedAtMs: number;
+  locator: ElementLocator | null;
+  elementContextId: string;
+  isSensitive: boolean;
 }
 let pendingInput: PendingInput | null = null;
 
-/** Wall-clock time of the last recorded hover, for throttling. */
-let lastHoverRecordedAtMs: number = 0;
+/**
+ * Wall-clock time of the last hover we ATTEMPTED to evaluate.
+ *
+ * The throttle has to count attempts, not successes. Counting successes meant
+ * that on a page where no hover ever qualifies - the common case - the throttle
+ * never engaged at all.
+ */
+let lastHoverAttemptAtMs: number = 0;
+
+/** The observer for the hover currently being evaluated, if any. */
+let activeHoverObserver: MutationObserver | null = null;
 
 /** The element the tester most recently clicked, and when. */
 let lastClickedElement: Element | null = null;
@@ -222,18 +241,14 @@ export function getRealEventTarget(event: Event): Element | null {
 // Sensitive-field detection (first line of defence)
 // -----------------------------------------------------------------------------
 
-const SENSITIVE_FIELD_WORDS: readonly string[] = [
-  "password", "passwd", "pwd", "otp", "one-time", "onetime", "cvv", "cvc",
-  "card", "cardnumber", "iban", "national-id", "nationalid", "nid", "ssn",
-  "secret", "token", "pin", "securitycode", "security-code",
-];
-
 /**
  * True when a field should never have its typed value stored.
  *
- * WHY it is duplicated here as well as in ai/redact.ts: defence in depth. This
- * one stops the value reaching disk at all; redact.ts stops anything that
- * slipped through reaching the network.
+ * WHY the vocabulary is shared with the redaction gate rather than duplicated:
+ * this check used a shorter literal list, so a field in the gap - "API Key",
+ * "Account Number", "Verification Code" - passed here, the raw value was
+ * written to IndexedDB, and only the gate caught it on the way out. The stated
+ * contract is that such a value never reaches disk at all.
  */
 export function isSensitiveField(element: Element): boolean {
   if (element instanceof HTMLInputElement && element.type === "password") {
@@ -247,19 +262,30 @@ export function isSensitiveField(element: Element): boolean {
     element.getAttribute("aria-label") ?? "",
     element.getAttribute("placeholder") ?? "",
     element.getAttribute("data-testid") ?? "",
-  ].join(" ").toLowerCase();
+    getAssociatedLabelText(element),
+  ].join(" ");
 
-  for (let index = 0; index < SENSITIVE_FIELD_WORDS.length; index = index + 1) {
-    if (identifyingText.includes(SENSITIVE_FIELD_WORDS[index])) {
-      return true;
-    }
-  }
-  return false;
+  return findSensitiveFieldRule(identifyingText) !== null;
 }
 
 // -----------------------------------------------------------------------------
 // Typing
 // -----------------------------------------------------------------------------
+
+/**
+ * Builds a locator without letting a failure lose the interaction.
+ *
+ * getElementSelector touches the live DOM in a dozen places; a page that
+ * removes the node mid-call, or a selector the engine rejects, must cost us the
+ * locator, not the recorded step.
+ */
+function safeGetElementSelector(element: Element): ElementLocator | null {
+  try {
+    return getElementSelector(element);
+  } catch (selectorError: unknown) {
+    return null;
+  }
+}
 
 /** Cancels any buffered typing without emitting it. */
 function clearPendingInput(): void {
@@ -313,22 +339,27 @@ export function flushPendingInput(): void {
   }
   window.clearTimeout(pendingInput.flushTimerId);
 
-  const element: Element = pendingInput.element;
-  const rawValue: string = pendingInput.latestValue;
+  const buffered: PendingInput = pendingInput;
   pendingInput = null;
 
   const event: RecordedEvent = createBaseEvent("input");
-  event.locator = getElementSelector(element);
 
-  if (isSensitiveField(element)) {
+  // Restore what was true when the tester STARTED typing, rather than what is
+  // true now, 600 ms later on a page that may have navigated since.
+  event.wallClockMs = buffered.startedAtMs;
+  event.pageUrl = buffered.pageUrl;
+  event.pageTitle = buffered.pageTitle;
+  event.locator = buffered.locator;
+  event.elementContextId = buffered.elementContextId;
+
+  if (buffered.isSensitive) {
     event.value = "[REDACTED:password]";
     event.valueWasRedacted = true;
   } else {
-    event.value = rawValue;
+    event.value = buffered.latestValue;
     event.valueWasRedacted = false;
   }
 
-  event.elementContextId = captureAndSendElementContext(element);
   sendEvent(event);
 }
 
@@ -358,7 +389,19 @@ export function handleInput(nativeEvent: Event): void {
   }
 
   if (pendingInput === null) {
-    pendingInput = { element: target, latestValue: currentValue, flushTimerId: 0 };
+    // Resolve the locator and the context NOW, while the element is still in
+    // the document and the URL still describes where the tester was typing.
+    pendingInput = {
+      element: target,
+      latestValue: currentValue,
+      flushTimerId: 0,
+      pageUrl: window.location.href,
+      pageTitle: document.title,
+      startedAtMs: Date.now(),
+      locator: safeGetElementSelector(target),
+      elementContextId: captureAndSendElementContext(target),
+      isSensitive: isSensitiveField(target),
+    };
   } else {
     pendingInput.latestValue = currentValue;
     window.clearTimeout(pendingInput.flushTimerId);
@@ -729,9 +772,10 @@ export function handleMouseOver(nativeEvent: MouseEvent): void {
     return;
   }
   const nowMs: number = Date.now();
-  if (nowMs - lastHoverRecordedAtMs < HOVER_THROTTLE_MS) {
+  if (nowMs - lastHoverAttemptAtMs < HOVER_THROTTLE_MS) {
     return;
   }
+  lastHoverAttemptAtMs = nowMs;
 
   const rawTarget: Element | null = getRealEventTarget(nativeEvent);
   if (rawTarget === null || document.body === null) {
@@ -746,6 +790,14 @@ export function handleMouseOver(nativeEvent: MouseEvent): void {
     return;
   }
 
+  // At most one hover under evaluation at a time. Without this, a pointer
+  // sweep left dozens of whole-document observers alive together, and every
+  // mutation batch on the page was delivered to all of them.
+  if (activeHoverObserver !== null) {
+    activeHoverObserver.disconnect();
+    activeHoverObserver = null;
+  }
+
   let sawMutation: boolean = false;
   const observer: MutationObserver = new MutationObserver(
     function onMutation(records: MutationRecord[]): void {
@@ -758,6 +810,7 @@ export function handleMouseOver(nativeEvent: MouseEvent): void {
     },
   );
 
+  activeHoverObserver = observer;
   observer.observe(document.body, {
     childList: true,
     subtree: true,
@@ -767,10 +820,12 @@ export function handleMouseOver(nativeEvent: MouseEvent): void {
 
   window.setTimeout(function decideAboutHover(): void {
     observer.disconnect();
+    if (activeHoverObserver === observer) {
+      activeHoverObserver = null;
+    }
     if (!sawMutation || !isRecordingActive) {
       return;
     }
-    lastHoverRecordedAtMs = Date.now();
 
     const event: RecordedEvent = createBaseEvent("hover");
     event.locator = getElementSelector(target);
@@ -790,6 +845,8 @@ export function handleUrlChange(pageUrl: string, pageTitle: string): void {
   if (!isRecordingActive) {
     return;
   }
+  // Whatever was being typed belongs to the page BEFORE this change.
+  flushPendingInput();
   const event: RecordedEvent = createBaseEvent("url-change");
   event.pageUrl = pageUrl;
   event.pageTitle = pageTitle;

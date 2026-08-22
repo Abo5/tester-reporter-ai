@@ -345,3 +345,40 @@ test("a visually-hidden control is still described in the evidence", async () =>
   assert.ok(context.ancestorHtml.includes("I agree to the terms"),
     "the visible label beside it should still be captured");
 });
+
+test("a structural locator inside a shadow root is scoped to its host", async () => {
+  // Uniqueness was measured INSIDE the shadow root and then emitted as a
+  // page-wide locator. Playwright's CSS engine pierces open shadow roots, so a
+  // bare `button` that was unique among three siblings in the component matched
+  // every button on the page.
+  installDom(`<html><body>
+    <header><button>Save</button><button>Cancel</button></header>
+    <my-toolbar></my-toolbar>
+  </body></html>`);
+  const api = await import("../dist-test/test-api.mjs");
+
+  const host = document.querySelector("my-toolbar");
+  const root = host.attachShadow({ mode: "open" });
+  root.innerHTML = `<div class="bar"><button></button></div>`;
+
+  const inner = root.querySelector("button");
+  const locator = api.getElementSelector(inner);
+
+  assert.equal(locator.isInShadowDom, true);
+
+  // XPath cannot pierce a shadow boundary in Playwright, so it must not be
+  // offered as a candidate at all.
+  const hasXPath = [locator.primary, ...locator.fallbacks]
+    .some((c) => c.strategy === "xpath");
+  assert.equal(hasXPath, false,
+    "an xpath candidate inside a shadow root cannot resolve and must not be "
+      + "offered");
+
+  if (locator.strategy === "css-path") {
+    assert.equal(locator.primary.isUniqueAtCaptureTime, false,
+      "uniqueness measured inside the shadow root says nothing about the page");
+    const expression = api.locatorToPlaywrightExpression(locator);
+    assert.ok(expression.includes("my-toolbar"),
+      `the expression must be scoped to the host: ${expression}`);
+  }
+});

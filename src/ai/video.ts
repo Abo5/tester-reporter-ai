@@ -83,20 +83,45 @@ export function blobToBase64(blob: Blob): Promise<string> {
 /**
  * Chooses which moments to grab key frames from.
  *
- * WHY it is failure-aware: an evenly spaced sample of a five-minute video will
- * usually miss the two seconds that matter. When we know where a failure was we
- * cluster frames around it, and always keep the first and last frame for
- * context.
+ * Slots are reserved BY PRIORITY, then sorted for output. An earlier version
+ * collected every candidate, sorted them, and filled the cap from the start of
+ * that sorted list - so the six EARLIEST offsets won. A five-minute session
+ * with failures at 00:30 and 04:00 sent four frames of the first 32 seconds,
+ * dropped the second failure entirely, and dropped the final-state frame, which
+ * the docs promise is always included.
+ *
+ * The order is: first frame, last frame, then failures working backwards from
+ * the most recent - because the last thing that broke is usually the thing the
+ * tester stopped to report.
  */
 export function chooseKeyFrameOffsets(
   durationMs: number,
   events: RecordedEvent[],
   failureEventIndexes: number[],
 ): number[] {
-  const offsets: number[] = [];
   const safeDurationMs: number = durationMs > 0 ? durationMs : 1000;
+  const chosen: number[] = [];
 
-  for (let index = 0; index < failureEventIndexes.length; index = index + 1) {
+  /** Adds an offset unless it duplicates one already chosen, or the cap is hit. */
+  function reserve(rawOffset: number): void {
+    if (chosen.length >= KEY_FRAME_COUNT) {
+      return;
+    }
+    const offset: number = Math.max(0, Math.min(safeDurationMs, Math.round(rawOffset)));
+    for (let index = 0; index < chosen.length; index = index + 1) {
+      if (Math.abs(chosen[index] - offset) < 500) {
+        return;
+      }
+    }
+    chosen.push(offset);
+  }
+
+  // 1. The documented guarantees: where the session started and where it ended.
+  reserve(0);
+  reserve(safeDurationMs - 200);
+
+  // 2. Failures, most recent first.
+  for (let index = failureEventIndexes.length - 1; index >= 0; index = index - 1) {
     const eventIndex: number = failureEventIndexes[index];
     if (eventIndex < 0 || eventIndex >= events.length) {
       continue;
@@ -105,42 +130,23 @@ export function chooseKeyFrameOffsets(
     if (failureOffsetMs < 0) {
       continue;
     }
-    offsets.push(Math.max(0, failureOffsetMs - 1500));
-    offsets.push(failureOffsetMs);
-    offsets.push(Math.min(safeDurationMs - 100, failureOffsetMs + 2000));
+    reserve(failureOffsetMs);
+    reserve(failureOffsetMs - 1500);
+    reserve(failureOffsetMs + 2000);
   }
 
-  offsets.push(0);
-  offsets.push(Math.max(0, safeDurationMs - 200));
-
-  // Fill any remaining slots with an even spread across the recording.
+  // 3. Anything left over goes to an even spread.
   let spreadIndex: number = 1;
-  while (offsets.length < KEY_FRAME_COUNT && spreadIndex < KEY_FRAME_COUNT) {
-    offsets.push(Math.floor((safeDurationMs * spreadIndex) / KEY_FRAME_COUNT));
+  while (chosen.length < KEY_FRAME_COUNT && spreadIndex < KEY_FRAME_COUNT) {
+    reserve((safeDurationMs * spreadIndex) / KEY_FRAME_COUNT);
     spreadIndex = spreadIndex + 1;
   }
 
-  offsets.sort(function compareNumbers(left: number, right: number): number {
+  // Chronological for output: the model reads them as a sequence.
+  chosen.sort(function compareNumbers(left: number, right: number): number {
     return left - right;
   });
-
-  // De-duplicate anything within half a second, then cap.
-  const uniqueOffsets: number[] = [];
-  for (let index = 0; index < offsets.length; index = index + 1) {
-    const offset: number = Math.max(0, Math.min(safeDurationMs, offsets[index]));
-    let isDuplicate: boolean = false;
-    for (let checkIndex = 0; checkIndex < uniqueOffsets.length;
-         checkIndex = checkIndex + 1) {
-      if (Math.abs(uniqueOffsets[checkIndex] - offset) < 500) {
-        isDuplicate = true;
-        break;
-      }
-    }
-    if (!isDuplicate && uniqueOffsets.length < KEY_FRAME_COUNT) {
-      uniqueOffsets.push(offset);
-    }
-  }
-  return uniqueOffsets;
+  return chosen;
 }
 
 /**

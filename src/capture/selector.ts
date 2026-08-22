@@ -755,8 +755,33 @@ export function getElementSelector(element: Element): ElementLocator {
     candidates.push(textCandidate);
   }
 
+  const shadowHostSelectors: string[] = collectShadowHostSelectors(element);
+  const isInShadow: boolean = shadowHostSelectors.length > 0;
+
   candidates.push(buildCssPathCandidate(element));
-  candidates.push(buildXPathCandidate(element));
+
+  // XPath is disqualified inside a shadow root: Playwright's xpath engine does
+  // not pierce shadow boundaries, so the expression cannot resolve at all. An
+  // unusable candidate that claims uniqueness is worse than no candidate.
+  if (!isInShadow) {
+    candidates.push(buildXPathCandidate(element));
+  }
+
+  // A path measured INSIDE a shadow root says nothing about the page.
+  // Playwright's CSS engine pierces open shadow roots, so a bare `button` that
+  // was unique among three siblings in the root matches every button on the
+  // page. Mark those candidates as not-unique so a role, name or test id wins,
+  // and so the generated spec carries the ambiguity warning if one has to.
+  if (isInShadow) {
+    for (let index = 0; index < candidates.length; index = index + 1) {
+      if (candidates[index].strategy === "css-path") {
+        candidates[index] = {
+          ...candidates[index],
+          isUniqueAtCaptureTime: false,
+        };
+      }
+    }
+  }
 
   // Choose the first candidate that was unique at capture time.
   let primaryCandidate: LocatorCandidate = candidates[candidates.length - 1];
@@ -774,7 +799,6 @@ export function getElementSelector(element: Element): ElementLocator {
     }
   }
 
-  const shadowHostSelectors: string[] = collectShadowHostSelectors(element);
   const insideList: boolean = isInsideRepeatedList(element);
 
   let listRowAnchorText: string = "";

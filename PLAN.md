@@ -7962,10 +7962,14 @@ pipeline. Every candidate finding was then attacked by three more agents, each w
 different job: *refute it*, *judge whether it matters to a real tester*, and *check whether
 it is already handled*. A finding survived only if it beat at least two of the three.
 
-It surfaced **one critical defect that would have broken the product's headline feature**,
-and fifteen more real ones. Every fix below was verified by reading the code or running it
-first — several plausible-sounding reports turned out to be wrong about what the code does,
-and were dropped.
+**Final tally: 125 agents, 40 candidate findings, 17 confirmed, 23 rejected.** All 17 are
+fixed. Every fix was verified by reading the code or running it first — several
+plausible-sounding reports turned out to be wrong about what the code actually does.
+
+One honest note about the 23 rejections: a number of them were rejected *because the fix
+had already landed while the review was still running*. The verifier read the current file,
+found the described code gone, and refuted the claim. Those were not false findings; they
+were findings that arrived after they had been acted on.
 
 ### 22.1 The one that mattered most
 
@@ -8041,3 +8045,19 @@ The `significanceReason` leak is the clearest example: there were nine redaction
 all nine happened to look at a different field. The fix that matters is not the one-line
 patch, it is the structural test that now plants a secret in *every* string and walks the
 result — the class of check that does not depend on someone remembering a field exists.
+
+### 22.4 The eight found in the final pass
+
+The first nine were fixed while the review was still running. These eight came from reading
+the completed report against the current code.
+
+| # | Defect | Why it mattered |
+|---|---|---|
+| 1 | **Two sensitive-field vocabularies that disagreed.** The content script used a literal substring list; the gate used broader patterns. | A field in the gap — `API Key`, `Account Number`, `Verification Code` — passed the capture-time check, so the raw value was written to **disk**, and only the gate caught it on the way out. The stated contract is that such a value never reaches disk at all. There is now one shared vocabulary in `src/shared/sensitive-fields.ts`; two lists that must agree will eventually disagree. |
+| 2 | **The typing buffer stamped everything 600 ms late.** It stored only an element reference and rebuilt the locator, the element context, the URL and the timestamp at flush time. | On a debounced typeahead the app has already navigated and unmounted the input by then, so every uniqueness count returns 0 and the locator resolves against a detached node. `handleScroll` already snapshots its volatile fields at event time, which is what shows this was an omission rather than a decision. |
+| 3 | **The hover throttle never fired.** It compared against the time of the last *recorded* hover, which is only set when one is actually emitted. | On a page where hovers cause no qualifying mutation — most pages, and this heuristic's own documented limitation — that value stayed 0 forever, so **every** mouseover built a whole-document subtree `MutationObserver`. Sweeping a 40-item sidebar registered forty at once. It now throttles on attempts and keeps at most one observer alive. |
+| 4 | **Uniqueness measured inside a shadow root was reported as page-wide.** `shadowHostSelectors` was recorded and codegen never read it. | Playwright's CSS engine pierces open shadow roots, so a bare `button` that was unique among three siblings in a component matched every button on the page — while claiming `isUniqueAtCaptureTime: true`. XPath is now disqualified inside a shadow root entirely, because Playwright's xpath engine does not pierce at all. |
+| 5 | **Id references resolved against the document for shadow elements.** | Ids in a shadow root are invisible to `document.getElementById`, but light-DOM ids are visible — and components use short generic ids precisely because they are meant to be encapsulated. So the lookup did not merely fail, it could **succeed against an unrelated element and return the wrong label**. A locator built on a wrong label is worse than one built on none, because it looks right. |
+| 6 | **Key-frame selection kept the six earliest offsets.** The cap was applied while walking a sorted list from the start. | A five-minute session with failures at 00:30 and 04:00 sent the model four frames of the first 32 seconds, dropped the second failure entirely, and dropped the final-state frame the design promises is always included. Slots are now reserved by priority — ends first, then failures working backwards from the most recent — and only then sorted for output. |
+| 7 | **The "recording without video" warning vanished on worker restart.** It lived in a module variable. | The worker is terminated when idle, the variable reset to `""`, and the next broadcast actively **erased a warning that was still true** — typically at the exact moment the tester had stopped interacting long enough to read it. It now lives beside the recording state. |
+| 8 | **The iframe inventory was a one-shot snapshot**, and empty inventories were not reported at all. | An SPA that mounts an iframe later never updated it, and the consumer then fell back to `iframe:nth-of-type((frameId % count) + 1)` — `frameId` is an opaque browser-assigned number, so that was a positional guess wearing the costume of a selector, silently targeting a *different* iframe. It now refreshes on change and falls back to a URL-derived selector. |
