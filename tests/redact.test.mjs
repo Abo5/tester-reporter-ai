@@ -413,3 +413,74 @@ test("NO string field anywhere in the bundle escapes the gate", () => {
       + leaks.join("\n  "));
   assert.equal(clean.redactionCompleted, true);
 });
+
+// --- The shapes a secret actually arrives in --------------------------------
+
+test("secrets are redacted in the shapes real traffic uses", () => {
+  // Each of these leaked before the labelled-secret rule was rewritten. A login
+  // request body and an OAuth callback are precisely where a real secret shows
+  // up, so missing both made the rule close to decorative.
+  const cases = [
+    ["JSON body", '{"username":"admin","password":"admin123"}', "admin123"],
+    ["quoted assignment", 'password = "hunter2secret"', "hunter2secret"],
+    ["OAuth fragment",
+      "https://x.test/cb#access_token=ya29AbCdEfGhIjKlMnOp&state=1",
+      "ya29AbCdEfGhIjKlMnOp"],
+    ["refresh token", "refresh_token=1//0gAbCdEfGhIjKlMn", "1//0gAbCdEfGhIjKlMn"],
+    ["form encoded", "username=admin&password=s3cr3tvalue", "s3cr3tvalue"],
+    ["api key", '{"api_key": "AK-99887766"}', "AK-99887766"],
+  ];
+
+  for (const [label, text, secret] of cases) {
+    const result = api.redactValuePatterns(text, {}, []);
+    assert.ok(!result.includes(secret), `${label} leaked: ${result}`);
+    assert.ok(result.includes("[REDACTED:"), `${label} produced no marker`);
+  }
+});
+
+test("the surrounding text survives so the evidence stays readable", () => {
+  const result = api.redactValuePatterns(
+    "https://x.test/cb#access_token=ya29AbCdEfGhIjKl&state=xyz", {}, []);
+
+  assert.ok(result.includes("access_token="),
+    "the parameter name must survive - a callback carrying a token is "
+      + "different evidence from one that is not");
+  assert.ok(result.includes("state=xyz"),
+    "an adjacent non-secret parameter was swallowed");
+});
+
+test("ordinary text mentioning these words is left alone", () => {
+  // Over-redaction makes the report useless, which is its own kind of failure.
+  const untouched = [
+    "The password field is required.",
+    "Token expiry: 30 days",
+    "Tenant ID: TN-40192",
+    "Status: Active",
+  ];
+  for (const text of untouched) {
+    assert.equal(api.redactValuePatterns(text, {}, []), text,
+      `over-redacted: ${text}`);
+  }
+});
+
+test("the generated script is redacted by FIELD, not only by value shape", () => {
+  // The action trace is redacted by field name; the script used to be redacted
+  // by value pattern alone. A six-digit verification code matches no value
+  // pattern, so it was stripped from the trace and left in the fill() beside it.
+  const script = [
+    "await page.getByLabel('Account Number').fill('SA55123456789012');",
+    "await page.getByLabel('Verification Code').fill('884210');",
+    "await page.getByRole('textbox', { name: 'CVV' }).fill('417');",
+    "await page.getByLabel('Tenant ID').fill('TN-40192');",
+  ].join("\n");
+
+  const result = api.redactPlaywrightScript(script, {}, []);
+
+  assert.ok(!result.includes("884210"),
+    "a verification code survived because it matches no value pattern");
+  assert.ok(!result.includes("SA55123456789012"));
+  assert.ok(!result.includes("'417'"));
+  assert.ok(result.includes("TN-40192"),
+    "a harmless tenant id must survive - over-redaction makes the script "
+      + "useless to replay");
+});

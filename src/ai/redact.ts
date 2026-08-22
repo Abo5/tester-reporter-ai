@@ -47,7 +47,7 @@ interface RedactionRule {
  */
 const SENSITIVE_FIELD_NAME_PATTERNS: readonly RedactionRule[] = [
   { name: "password", pattern: /pass(word|wd)?|\bpwd\b/i },
-  { name: "otp", pattern: /\botp\b|one.?time|verification.?code/i },
+  { name: "otp", pattern: /\botp\b|one.?time|verification.?code|auth.?code|\bpin\b/i },
   { name: "cvv", pattern: /\bcvv\b|\bcvc\b|security.?code/i },
   { name: "card", pattern: /card.?(number|no)\b|\bpan\b|credit.?card/i },
   { name: "iban", pattern: /\biban\b|account.?number/i },
@@ -86,9 +86,30 @@ const SENSITIVE_VALUE_PATTERNS: readonly RedactionRule[] = [
   // advertise their own test credentials: "Password : admin123", "API key = ...".
   // The label is kept; only the value after it is removed.
   {
+    // Everything before the value is captured in group 1 and preserved, so the
+    // label survives and only the secret goes.
+    //
+    // Two shapes broke the first version of this rule, and both are the ones
+    // that matter most:
+    //
+    //   {"password":"admin123"}   - a quote sits between the label and the
+    //                               colon, and another before the value
+    //   #access_token=ya29...     - \btoken\b does not match inside
+    //                               access_token, because _ is a word character
+    //
+    // A login request body and an OAuth callback are precisely where a real
+    // secret shows up, so missing both made the rule close to decorative.
     name: "labelled-secret",
     keepLabel: true,
-    pattern: /\b(pass(?:word|wd|code)?|pwd|secret|api[ _-]?key|auth[ _-]?token|token|otp|pin)\b(\s*[:=]\s*)([^\s<>"'`,;]{3,64})/gi,
+    pattern: new RegExp(
+      "([\"'\\[]?\\b(?:"
+      + "(?:access|refresh|id|auth|bearer|api|session|csrf|xsrf|private)"
+      + "[ _-]?(?:token|key|secret)"
+      + "|pass(?:word|wd|code|phrase)?|pwd|secret|token|otp|pin|cvv|cvc"
+      + ")\\b[\"']?\\s*[:=]\\s*[\"']?)"
+      + "([^\\s<>\"'`,;&\\]}]{3,200})",
+      "gi",
+    ),
   },
 ];
 
@@ -167,15 +188,15 @@ export function redactValuePatterns(
     const pattern: RegExp = new RegExp(rule.pattern.source, rule.pattern.flags);
 
     if (rule.keepLabel === true) {
+      // The pattern captures EVERYTHING before the value in group 1 - label,
+      // any quotes, the separator - and the value alone in group 2. Keeping
+      // group 1 and dropping group 2 preserves the label while removing the
+      // secret, and it stays correct when the shape of group 1 changes.
       result = result.replace(
         pattern,
-        function onLabelledMatch(
-          _whole: string,
-          label: string,
-          separator: string,
-        ): string {
+        function onLabelledMatch(_whole: string, beforeValue: string): string {
           countRedaction(counter, rule.name);
-          return label + separator + "[REDACTED:" + rule.name + "]";
+          return beforeValue + "[REDACTED:" + rule.name + "]";
         },
       );
       continue;
@@ -335,20 +356,49 @@ export function redactPlaywrightScript(
     return "";
   }
 
-  // Any fill() whose argument matches a value pattern loses that argument.
+  // Redact fill() arguments by the FIELD they are being typed into, as well as
+  // by what they look like.
+  //
+  // The action trace is redacted by field name, but the script was only ever
+  // redacted by value pattern. A value typed into a field the content script
+  // did not flag - "Verification Code", "Account Number" - was therefore
+  // stripped from the trace and left sitting in the fill() call beside it. A
+  // six-digit verification code matches no value pattern at all.
+  const lines: string[] = script.split("\n");
   const fillPattern: RegExp = /(\.\s*fill\s*\(\s*)'((?:[^'\\]|\\.)*)'(\s*\))/g;
-  let result: string = script.replace(
-    fillPattern,
-    function onFill(
-      _whole: string,
-      prefix: string,
-      value: string,
-      suffix: string,
-    ): string {
-      const redactedValue: string = redactValuePatterns(value, counter, extraPatterns);
-      return prefix + "'" + redactedValue + "'" + suffix;
-    },
-  );
+
+  for (let index = 0; index < lines.length; index = index + 1) {
+    const line: string = lines[index];
+    if (!line.includes(".fill(")) {
+      continue;
+    }
+
+    // Everything before .fill( names the control: getByLabel('Account Number'),
+    // getByRole('textbox', { name: 'CVV' }), getByPlaceholder('OTP') ...
+    const fillIndex: number = line.indexOf(".fill(");
+    const locatorPart: string = line.slice(0, fillIndex);
+    const fieldRule: RedactionRule | null = findSensitiveFieldRule(locatorPart);
+
+    lines[index] = line.replace(
+      fillPattern,
+      function onFill(
+        _whole: string,
+        prefix: string,
+        value: string,
+        suffix: string,
+      ): string {
+        if (fieldRule !== null) {
+          countRedaction(counter, fieldRule.name);
+          return prefix + "'[REDACTED:" + fieldRule.name + "]'" + suffix;
+        }
+        const redactedValue: string =
+          redactValuePatterns(value, counter, extraPatterns);
+        return prefix + "'" + redactedValue + "'" + suffix;
+      },
+    );
+  }
+
+  let result: string = lines.join("\n");
 
   // Then blanket patterns over the whole file, which also catches URLs in goto().
   result = redactValuePatterns(result, counter, extraPatterns);
