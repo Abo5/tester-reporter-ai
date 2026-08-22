@@ -12,12 +12,16 @@
     "clean": "rm -rf dist dist-test",
     "verify": "npm run typecheck && npm run build && npm run test",
     "build:tests": "node scripts/build-tests.mjs",
-    "test:live": "node scripts/build-tests.mjs && node --env-file-if-exists=.env --test tests/live/*.live.mjs"
+    "test:live": "node scripts/build-tests.mjs && node --env-file-if-exists=.env --test tests/live/*.live.mjs",
+    "test:e2e": "npm run build && xvfb-run -a --server-args='-screen 0 1280x900x24' node --test --test-concurrency=1 e2e/*.e2e.mjs",
+    "test:e2e:display": "npm run build && node --test --test-concurrency=1 e2e/*.e2e.mjs"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@types/chrome": "^0.0.287",
     "esbuild": "^0.24.2",
     "jsdom": "^30.0.1",
+    "playwright": "^1.62.1",
     "typescript": "^5.7.3"
   }
 }

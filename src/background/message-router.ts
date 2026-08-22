@@ -43,6 +43,7 @@ import {
 } from "./navigation-listener";
 import {
   createSession,
+  createEmptyMediaInfo,
   updateSession,
   getSession,
   listSessions,
@@ -57,6 +58,9 @@ import {
   putConsoleEntry,
 } from "../storage/artifacts";
 import { readSettings } from "../storage/settings";
+import { readEventsForSession } from "../storage/events";
+import { readNetworkEntries } from "../storage/artifacts";
+import { generatePlaywrightSpec } from "../codegen/generate-spec";
 import { readQuotaStatus } from "../storage/media";
 import { logInfo, logWarning, logError } from "../shared/logger";
 import { formatBytes } from "../shared/time";
@@ -215,6 +219,32 @@ function requestTabStreamId(tabId: number): Promise<string> {
 }
 
 /**
+ * Turns a tab-capture failure into something a tester can act on.
+ *
+ * WHY it is worth translating: Chrome's own message ("Extension has not been
+ * invoked for the current page") tells a QA tester nothing about what to do
+ * next. The fix is always the same and is worth spelling out.
+ */
+function describeCaptureFailure(captureError: unknown): string {
+  const raw: string = String(captureError);
+
+  if (raw.includes("not been invoked") || raw.includes("activeTab")) {
+    return "Recording without video: Chrome only allows tab capture after you "
+      + "click the extension icon on the page you want to record. Click the "
+      + "icon on that tab, then press Record again. Everything else - your "
+      + "steps, the page code and the Playwright script - is being recorded "
+      + "normally.";
+  }
+  if (raw.includes("Chrome pages cannot be captured")) {
+    return "Recording without video: this kind of page cannot be captured by "
+      + "Chrome. Your steps, the page code and the Playwright script are still "
+      + "being recorded.";
+  }
+  return "Recording without video (" + raw + "). Your steps, the page code and "
+    + "the Playwright script are still being recorded.";
+}
+
+/**
  * Starts a recording session on the given tab.
  *
  * WHY the tabCapture stream id is obtained HERE: chrome.tabCapture is available
@@ -271,22 +301,49 @@ async function handleStartRecording(
   await writeActiveState(state);
   clearFrameInventory();
 
-  await ensureOffscreenDocument();
+  // --- Video capture is BEST EFFORT. --------------------------------------
+  //
+  // The design invariant is that the tester never loses their recording because
+  // a later step failed. That applies here too: if the tab stream cannot be
+  // acquired, we record everything else and say so, rather than refusing to
+  // record at all.
+  //
+  // The most common cause is Chrome's activeTab rule: tabCapture requires the
+  // extension to have been INVOKED on the tab (icon click, keyboard command,
+  // context menu). Host permissions alone are not enough, and the grant is
+  // revoked when the tab navigates.
+  let videoFailureReason: string = "";
+  try {
+    await ensureOffscreenDocument();
+    const tabStreamId: string = await requestTabStreamId(tabId);
+    await sendMessageIgnoringNoReceiver({
+      kind: "offscreen/start",
+      tabStreamId: tabStreamId,
+      captureMicrophone: captureMicrophone,
+      sessionId: sessionId,
+    });
+  } catch (captureError: unknown) {
+    videoFailureReason = describeCaptureFailure(captureError);
+    logWarning("router", "Recording without video: " + videoFailureReason);
 
-  const tabStreamId: string = await requestTabStreamId(tabId);
-
-  await sendMessageIgnoringNoReceiver({
-    kind: "offscreen/start",
-    tabStreamId: tabStreamId,
-    captureMicrophone: captureMicrophone,
-    sessionId: sessionId,
-  });
+    await updateSession(sessionId, {
+      media: {
+        ...createEmptyMediaInfo(),
+        state: "failed",
+        failureReason: videoFailureReason,
+      },
+    });
+    await closeOffscreenDocument();
+    lastErrorText = videoFailureReason;
+  }
 
   // Tell the already-injected content scripts in THIS TAB to begin listening.
   // Content scripts cannot hear runtime.sendMessage, so this is required.
   await notifyTabOfRecordingState(tabId, "recording", sessionId);
 
-  lastErrorText = "";
+  if (videoFailureReason === "") {
+    lastErrorText = "";
+  }
   await broadcastStatus();
   logInfo("router", "Recording started for session " + sessionId + ".");
 }
@@ -408,16 +465,65 @@ async function handleStopRecording(): Promise<void> {
   });
 
   await notifyTabOfRecordingState(state.tabId, "idle", "");
+
+  // If video capture never started, there is no recorder to wait for. Finishing
+  // immediately means the tester is not left staring at "finishing the
+  // recording..." for fifteen seconds for no reason.
+  const session = await getSession(state.sessionId);
+  const hadNoRecorder: boolean =
+    session !== null
+    && (session.media.state === "failed" || session.media.state === "not-started");
+
+  if (hadNoRecorder) {
+    await finaliseSessionWithoutMediaIfNeeded(state.sessionId);
+    return;
+  }
+
   await sendMessageIgnoringNoReceiver({ kind: "offscreen/stop" });
   await broadcastStatus();
 
   // Safety net: if the offscreen document never answers (it crashed, or the
-  // stream was revoked), finish the session anyway after a short grace period
-  // so the tester still gets their events and their generated script.
+  // stream was revoked), finish the session anyway after a grace period so the
+  // tester still gets their events and their generated script.
   setTimeout(function finishWithoutMediaIfStillProcessing(): void {
     void finaliseSessionWithoutMediaIfNeeded(state.sessionId);
   }, 15000);
 }
+
+/**
+ * Generates the Playwright spec and stores it on the session.
+ *
+ * Runs in the service worker at stop time because codegen is pure TypeScript
+ * with no DOM dependency, and because the tester should have the script the
+ * moment the session is ready - not only if and when they open the review page.
+ *
+ * Leaving it in the review page alone meant the product's central artifact did
+ * not exist until someone happened to look at it: a session read straight from
+ * storage had an empty script. The review page keeps its own call as a fallback
+ * for sessions recorded before this change.
+ *
+ * Never throws: a codegen bug must not cost the tester their recorded evidence.
+ */
+async function generateScriptForSession(sessionId: string): Promise<void> {
+  try {
+    const session = await getSession(sessionId);
+    if (session === null || session.playwrightScript !== "") {
+      return;
+    }
+
+    const events = await readEventsForSession(sessionId);
+    const networkEntries = await readNetworkEntries(sessionId);
+    const script: string = generatePlaywrightSpec(session, events, networkEntries);
+
+    await updateSession(sessionId, { playwrightScript: script });
+    logInfo("router", "Generated a " + String(script.length)
+      + " character spec for session " + sessionId + ".");
+  } catch (codegenError: unknown) {
+    logWarning("router", "Script generation failed; the review page will retry.",
+      codegenError);
+  }
+}
+
 
 /**
  * Completes a session that is still stuck in "processing" because the offscreen
@@ -442,6 +548,7 @@ async function finaliseSessionWithoutMediaIfNeeded(sessionId: string): Promise<v
       + "session. Every other artifact was kept.",
   };
 
+  await generateScriptForSession(sessionId);
   await updateSession(sessionId, { status: "ready", media: failedMedia });
   await clearActiveState();
   await closeOffscreenDocument();
@@ -531,6 +638,7 @@ async function handleOffscreenFinished(
   const recordedDurationMs: number =
     state === null ? info.durationMs : recordedDurationForState(state);
 
+  await generateScriptForSession(sessionId);
   await updateSession(sessionId, {
     status: "ready",
     media: info,
@@ -552,6 +660,7 @@ async function handleOffscreenFinished(
 async function handleOffscreenError(sessionId: string, reason: string): Promise<void> {
   logWarning("router", "Offscreen error: " + reason);
 
+  await generateScriptForSession(sessionId);
   const session = await getSession(sessionId);
   if (session !== null) {
     await updateSession(sessionId, {

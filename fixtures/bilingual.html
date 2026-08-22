@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <title>طلب تجديد العقد</title>
+  <style>
+    body{font-family:system-ui,sans-serif;margin:0;background:#f6f7f9;color:#1a1c20}
+    .wrap{max-width:760px;margin:0 auto;padding:24px}
+    fieldset{background:#fff;border:1px solid #d9dce3;border-radius:8px;padding:16px}
+    label{display:block;font-size:13px;margin:12px 0 4px}
+    input,select{font:inherit;padding:8px 10px;border:1px solid #d9dce3;border-radius:6px;width:100%}
+    button{font:inherit;margin-top:14px;padding:8px 16px;border-radius:6px;border:1px solid #1f5fd0;background:#1f5fd0;color:#fff}
+    /* DEFECT 4 (ui/content): an English-direction block inside an RTL page. */
+    .ltr-leak{direction:ltr;text-align:left}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>طلب تجديد العقد</h1>
+  <form id="renew">
+    <fieldset>
+      <legend>بيانات المستأجر</legend>
+
+      <label for="name">اسم المستأجر</label>
+      <input id="name" name="tenantName" type="text" />
+
+      <!-- DEFECT 4: label is Arabic, the control renders left-to-right. -->
+      <label for="iban">رقم الآيبان</label>
+      <input id="iban" name="iban" type="text" class="ltr-leak" placeholder="SA00 0000 0000 0000 0000 0000" />
+
+      <!-- DEFECT 5 (content): an untranslated English option in an Arabic page. -->
+      <label for="duration">مدة العقد</label>
+      <select id="duration" name="duration">
+        <option value="12">سنة واحدة</option>
+        <option value="24">سنتان</option>
+        <option value="36">Three years</option>
+      </select>
+
+      <label><input type="checkbox" id="agree" name="agree" /> أوافق على الشروط والأحكام</label>
+
+      <button type="submit" id="submit-renew">إرسال الطلب</button>
+    </fieldset>
+  </form>
+  <p id="result" role="status"></p>
+</div>
+<script>
+  document.getElementById('renew').addEventListener('submit', function (e) {
+    e.preventDefault();
+    document.getElementById('result').textContent = 'تم استلام الطلب';
+  });
+</script>
+</body>
+</html>

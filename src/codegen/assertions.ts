@@ -21,18 +21,58 @@ import { FAILURE_ATTRIBUTION_WINDOW_MS } from "../shared/constants";
 export function findFailureAfterEvent(
   event: RecordedEvent,
   networkEntries: NetworkEntry[],
+  allEvents: RecordedEvent[],
 ): NetworkEntry | null {
   const windowEndMs: number = event.wallClockMs + FAILURE_ATTRIBUTION_WINDOW_MS;
+
   for (let index = 0; index < networkEntries.length; index = index + 1) {
     const entry: NetworkEntry = networkEntries[index];
     if (!entry.isFailure) {
       continue;
     }
-    if (entry.startedAtMs >= event.wallClockMs && entry.startedAtMs <= windowEndMs) {
+    if (entry.startedAtMs < event.wallClockMs || entry.startedAtMs > windowEndMs) {
+      continue;
+    }
+
+    // Attribute the failure to the LAST action before it, not to every action
+    // inside the window.
+    //
+    // WHY: a real session fires a request a second after a click, and the two
+    // or three steps that follow are all "within three seconds" of it. Marking
+    // all of them points the tester at four suspects instead of one, which is
+    // worse than saying nothing.
+    if (isClosestPrecedingAction(event, entry, allEvents)) {
       return entry;
     }
   }
   return null;
+}
+
+/**
+ * True when `event` is the last recorded action that happened before the
+ * failure started.
+ */
+function isClosestPrecedingAction(
+  event: RecordedEvent,
+  failure: NetworkEntry,
+  allEvents: RecordedEvent[],
+): boolean {
+  let closest: RecordedEvent | null = null;
+
+  for (let index = 0; index < allEvents.length; index = index + 1) {
+    const candidate: RecordedEvent = allEvents[index];
+    if (candidate.wallClockMs > failure.startedAtMs) {
+      continue;
+    }
+    if (closest === null || candidate.wallClockMs > closest.wallClockMs) {
+      closest = candidate;
+    }
+  }
+
+  if (closest === null) {
+    return false;
+  }
+  return closest.index === event.index;
 }
 
 /**
@@ -41,8 +81,10 @@ export function findFailureAfterEvent(
 export function buildFailureComment(
   event: RecordedEvent,
   networkEntries: NetworkEntry[],
+  allEvents: RecordedEvent[],
 ): string {
-  const failure: NetworkEntry | null = findFailureAfterEvent(event, networkEntries);
+  const failure: NetworkEntry | null =
+    findFailureAfterEvent(event, networkEntries, allEvents);
   if (failure === null) {
     return "";
   }

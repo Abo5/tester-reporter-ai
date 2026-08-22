@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="utf-8" />
+  <title>Service Catalog — Rental Services</title>
+  <style>
+    body{font-family:system-ui,sans-serif;margin:0;background:#f6f7f9;color:#1a1c20}
+    .wrap{max-width:960px;margin:0 auto;padding:24px}
+    h1{font-size:22px}
+    [role=tablist]{display:flex;gap:8px;flex-wrap:wrap;border-bottom:1px solid #d9dce3;padding-bottom:10px}
+    [role=tab]{background:#fff;border:1px solid #d9dce3;border-radius:6px;padding:8px 14px;cursor:pointer;font:inherit}
+    [role=tab][aria-selected=true]{background:#1f5fd0;color:#fff;border-color:#1f5fd0}
+    form{margin-top:20px;background:#fff;border:1px solid #d9dce3;border-radius:8px;padding:16px}
+    label{display:block;font-size:12px;color:#5c6270;margin-bottom:4px}
+    input{font:inherit;padding:8px 10px;border:1px solid #d9dce3;border-radius:6px;width:260px}
+    input[aria-invalid=true]{border-color:#c0332c}
+    button{font:inherit;padding:8px 14px;border-radius:6px;border:1px solid #1f5fd0;background:#1f5fd0;color:#fff;cursor:pointer}
+    button[disabled]{opacity:.5;cursor:not-allowed}
+    /* DEFECT 2: the error message is in the DOM but never shown. */
+    .field-error{display:none;color:#c0332c;font-size:12px;margin-top:6px}
+    table{width:100%;border-collapse:collapse;margin-top:20px;background:#fff}
+    th,td{border:1px solid #d9dce3;padding:8px 10px;text-align:left;font-size:14px}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Service Catalog</h1>
+
+  <!-- DEFECT 1 (content): these labels do not match the approved design.
+       The words are reordered and "&" is used instead of "and". -->
+  <div role="tablist" aria-label="Service categories">
+    <button role="tab" aria-selected="true" data-testid="tab-initiating">Initiating the Rental Relationship</button>
+    <button role="tab" aria-selected="false" data-testid="tab-renewal">Contract Renewal &amp; Continuation</button>
+    <button role="tab" aria-selected="false" data-testid="tab-parties">Managing Contract Parties &amp; Authorizations</button>
+    <button role="tab" aria-selected="false" data-testid="tab-ending">Ending the Rental Relationship</button>
+  </div>
+
+  <form id="search-form">
+    <label for="tenant">Tenant ID</label>
+    <input id="tenant" name="tenantId" type="text" placeholder="TN-00000" aria-describedby="tenant-error" />
+    <!-- DEFECT 2 (state): shown only via aria-invalid; the text never renders. -->
+    <p class="field-error" id="tenant-error">Tenant ID must be 8 digits</p>
+    <div style="margin-top:12px">
+      <button type="submit" id="search-btn">Search</button>
+    </div>
+  </form>
+
+  <table>
+    <thead><tr><th>Tenant</th><th>Contract</th><th>Status</th><th></th></tr></thead>
+    <tbody id="results">
+      <tr><td>TN-40190</td><td>C-1001</td><td>Active</td><td><button class="view">View</button></td></tr>
+      <tr><td>TN-40191</td><td>C-1002</td><td>Active</td><td><button class="view">View</button></td></tr>
+      <tr><td>TN-40192</td><td>C-1003</td><td>Expired</td><td><button class="view">View</button></td></tr>
+    </tbody>
+  </table>
+
+  <p id="status" role="status"></p>
+</div>
+
+<script>
+  // Tabs.
+  document.querySelectorAll('[role=tab]').forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      document.querySelectorAll('[role=tab]').forEach(function (t) {
+        t.setAttribute('aria-selected', String(t === tab));
+      });
+    });
+  });
+
+  // DEFECT 3 (api + functional): searching triggers a 500 and then a TypeError.
+  document.getElementById('search-form').addEventListener('submit', function (event) {
+    event.preventDefault();
+    var value = document.getElementById('tenant').value;
+    var input = document.getElementById('tenant');
+    input.setAttribute('aria-invalid', 'true');
+
+    fetch('/api/contracts/' + encodeURIComponent(value))
+      .then(function (response) { return response.json(); })
+      .then(function (payload) {
+        // payload.contract is undefined on the error response -> TypeError.
+        document.getElementById('status').textContent = payload.contract.id;
+      })
+      .catch(function (error) {
+        console.error('Contract lookup failed:', error.message);
+      });
+  });
+
+  document.querySelectorAll('.view').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.getElementById('status').textContent = 'Opening contract…';
+    });
+  });
+</script>
+</body>
+</html>

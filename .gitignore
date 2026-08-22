@@ -10,3 +10,5 @@ dist-test/
 .env.local
 .env.*.local
 !.env.example
+roundtrip-tmp-*/
+test-results/

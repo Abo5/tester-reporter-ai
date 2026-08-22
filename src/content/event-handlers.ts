@@ -47,6 +47,19 @@ let pendingInput: PendingInput | null = null;
 /** Wall-clock time of the last recorded hover, for throttling. */
 let lastHoverRecordedAtMs: number = 0;
 
+/** The element the tester most recently clicked, and when. */
+let lastClickedElement: Element | null = null;
+let lastClickWallClockMs: number = 0;
+
+/** Wall-clock time of the last Enter press, for implicit-submit detection. */
+let lastEnterPressWallClockMs: number = 0;
+
+/** How long after an Enter press a submit-button click is treated as synthetic. */
+const IMPLICIT_SUBMIT_WINDOW_MS: number = 400;
+
+/** How long after a click a hover on the SAME element is ignored. */
+const POST_CLICK_HOVER_SUPPRESSION_MS: number = 1500;
+
 /** The most recent scroll, held until we know whether it led to an action. */
 interface PendingScroll {
   scrollX: number;
@@ -256,11 +269,27 @@ function clearPendingInput(): void {
 }
 
 /**
- * Reads the current value of anything a user can type into.
+ * Input types that fire `input` events but are NOT text entry.
+ *
+ * Each of these needs a different Playwright call than fill(), and treating
+ * them as typing produces a spec that does not run: Playwright rejects
+ * fill() on a checkbox outright.
+ */
+const NON_TEXT_INPUT_TYPES: readonly string[] = [
+  "checkbox", "radio", "file", "button", "submit", "reset", "image",
+  "range", "color",
+];
+
+/**
+ * Reads the current value of anything a user can TYPE into.
  * Returns null when the element is not a text-entry control.
  */
 function readEditableValue(element: Element): string | null {
   if (element instanceof HTMLInputElement) {
+    const inputType: string = (element.type ?? "text").toLowerCase();
+    if (NON_TEXT_INPUT_TYPES.includes(inputType)) {
+      return null;   // handleChange deals with these.
+    }
     return element.value;
   }
   if (element instanceof HTMLTextAreaElement) {
@@ -391,6 +420,40 @@ function emitPendingScrollIfRecent(): void {
 // -----------------------------------------------------------------------------
 
 /**
+ * True when a click is Chrome's synthetic implicit-form-submission click.
+ *
+ * Three signals together, because none is conclusive alone:
+ *  - it landed on a submit control;
+ *  - an Enter key press happened a moment ago;
+ *  - it carries no pointer coordinates, because no pointer was involved.
+ *
+ * A tester who really did press Enter and then click Submit within 400 ms
+ * would lose that second click. That is the right trade: a duplicated
+ * submission in a generated spec is a bug the tester has to debug, whereas a
+ * missing redundant click changes nothing about what the test proves.
+ */
+function isImplicitSubmitClick(nativeEvent: MouseEvent, target: Element): boolean {
+  const sinceEnterMs: number = Date.now() - lastEnterPressWallClockMs;
+  if (lastEnterPressWallClockMs === 0 || sinceEnterMs > IMPLICIT_SUBMIT_WINDOW_MS) {
+    return false;
+  }
+
+  const hasPointerCoordinates: boolean =
+    nativeEvent.clientX !== 0 || nativeEvent.clientY !== 0;
+  if (hasPointerCoordinates) {
+    return false;
+  }
+
+  const isSubmitControl: boolean =
+    // A <button> with no type attribute defaults to type="submit", and the
+    // DOM property already reflects that default, so checking it is enough.
+    (target instanceof HTMLButtonElement && target.type === "submit")
+    || (target instanceof HTMLInputElement && target.type === "submit");
+
+  return isSubmitControl;
+}
+
+/**
  * Handles a click: locator, element context, and possibly a full snapshot.
  */
 export function handleClick(nativeEvent: MouseEvent): void {
@@ -412,10 +475,20 @@ export function handleClick(nativeEvent: MouseEvent): void {
     return;
   }
 
+  // Chrome dispatches a synthetic click on the submit button when Enter is
+  // pressed inside a form. Recording it as well as the key press makes the
+  // generated spec submit twice on replay.
+  if (isImplicitSubmitClick(nativeEvent, target)) {
+    return;
+  }
+
   // Typing before a click must be recorded first, or the script replays the
   // click before the value that made it meaningful.
   flushPendingInput();
   emitPendingScrollIfRecent();
+
+  lastClickedElement = target;
+  lastClickWallClockMs = Date.now();
 
   const event: RecordedEvent = createBaseEvent("click");
   event.locator = getElementSelector(target);
@@ -474,11 +547,38 @@ export function handleChange(nativeEvent: Event): void {
   }
 
   if (target instanceof HTMLInputElement) {
-    if (target.type === "checkbox" || target.type === "radio") {
+    const inputType: string = (target.type ?? "text").toLowerCase();
+
+    if (inputType === "checkbox" || inputType === "radio") {
       const eventType: RecordedEventType = target.checked ? "check" : "uncheck";
       const event: RecordedEvent = createBaseEvent(eventType);
       event.locator = getElementSelector(target);
       event.value = target.value;
+      event.elementContextId = captureAndSendElementContext(target);
+      sendEvent(event);
+      return;
+    }
+
+    // range and color fire `input` but cannot be typed into. Playwright can
+    // still set them with fill(), so they are recorded as an input event here
+    // where the FINAL value is known, rather than through the typing buffer.
+    if (inputType === "range" || inputType === "color") {
+      const event: RecordedEvent = createBaseEvent("input");
+      event.locator = getElementSelector(target);
+      event.value = target.value;
+      event.elementContextId = captureAndSendElementContext(target);
+      sendEvent(event);
+      return;
+    }
+
+    // A file picker cannot be replayed from a recording: the path is on the
+    // tester's machine. Record it so the AI knows a file was chosen, and let
+    // codegen emit a comment rather than an uncallable statement.
+    if (inputType === "file") {
+      const event: RecordedEvent = createBaseEvent("input");
+      event.locator = getElementSelector(target);
+      event.value = "[FILE_UPLOAD]";
+      event.valueWasRedacted = true;
       event.elementContextId = captureAndSendElementContext(target);
       sendEvent(event);
     }
@@ -509,6 +609,7 @@ export function handleKeyDown(nativeEvent: KeyboardEvent): void {
 
   if (nativeEvent.key === "Enter") {
     flushPendingInput();
+    lastEnterPressWallClockMs = Date.now();
   }
 
   const target: Element | null = getRealEventTarget(nativeEvent);
@@ -526,6 +627,77 @@ export function handleKeyDown(nativeEvent: KeyboardEvent): void {
 // -----------------------------------------------------------------------------
 // Hover
 // -----------------------------------------------------------------------------
+
+/**
+ * True when a mutation plausibly belongs to the element being hovered.
+ *
+ * WHY this exists: the first version of the hover heuristic watched the whole
+ * document and treated ANY mutation inside a 250 ms window as proof that the
+ * hover changed something. On a real page - where a status line updates, a
+ * spinner ticks, or a framework re-renders asynchronously - that fires
+ * constantly. A single short session produced six spurious hover events, which
+ * is precisely the noise the heuristic was supposed to prevent.
+ *
+ * A mutation counts only when it is inside the hovered element, inside its
+ * containing block, or is a node newly attached anywhere while that element is
+ * hovered AND positioned near it (tooltips and popovers are usually portalled
+ * to the end of <body>, so they are not descendants).
+ */
+function isMutationRelatedToElement(
+  record: MutationRecord,
+  hovered: Element,
+): boolean {
+  const mutationTarget: Node = record.target;
+
+  // Inside the hovered element, or inside its immediate container.
+  if (hovered.contains(mutationTarget)) {
+    return isInterestingMutation(record);
+  }
+  const container: Element | null = hovered.parentElement;
+  if (container !== null && container.contains(mutationTarget)
+      && isInterestingMutation(record)) {
+    return true;
+  }
+
+  // A portalled tooltip or popover: newly attached, and visually near us.
+  if (record.addedNodes.length > 0) {
+    const hoveredBox: DOMRect = hovered.getBoundingClientRect();
+    for (let index = 0; index < record.addedNodes.length; index = index + 1) {
+      const added: Node = record.addedNodes[index];
+      if (!(added instanceof Element)) {
+        continue;
+      }
+      const addedBox: DOMRect = added.getBoundingClientRect();
+      if (addedBox.width === 0 && addedBox.height === 0) {
+        continue;
+      }
+      const horizontalGap: number = Math.max(
+        hoveredBox.left - addedBox.right, addedBox.left - hoveredBox.right, 0);
+      const verticalGap: number = Math.max(
+        hoveredBox.top - addedBox.bottom, addedBox.top - hoveredBox.bottom, 0);
+      if (horizontalGap < 120 && verticalGap < 120) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+/** True for the mutation kinds that represent a visible state change. */
+function isInterestingMutation(record: MutationRecord): boolean {
+  if (record.addedNodes.length > 0 || record.removedNodes.length > 0) {
+    return true;
+  }
+  if (record.type !== "attributes") {
+    return false;
+  }
+  return record.attributeName === "class"
+    || record.attributeName === "style"
+    || record.attributeName === "aria-expanded"
+    || record.attributeName === "aria-hidden"
+    || record.attributeName === "hidden";
+}
 
 /**
  * Records a hover ONLY when it caused a visible DOM change.
@@ -554,20 +726,18 @@ export function handleMouseOver(nativeEvent: MouseEvent): void {
     return;
   }
 
+  // The pointer resting on something the tester just clicked is not a
+  // discovery, it is where the mouse happens to be.
+  if (target === lastClickedElement
+      && nowMs - lastClickWallClockMs < POST_CLICK_HOVER_SUPPRESSION_MS) {
+    return;
+  }
+
   let sawMutation: boolean = false;
   const observer: MutationObserver = new MutationObserver(
     function onMutation(records: MutationRecord[]): void {
       for (let index = 0; index < records.length; index = index + 1) {
-        const record: MutationRecord = records[index];
-        if (record.addedNodes.length > 0 || record.removedNodes.length > 0) {
-          sawMutation = true;
-          return;
-        }
-        if (record.type === "attributes"
-            && (record.attributeName === "class"
-              || record.attributeName === "style"
-              || record.attributeName === "aria-expanded"
-              || record.attributeName === "hidden")) {
+        if (isMutationRelatedToElement(records[index], target)) {
           sawMutation = true;
           return;
         }

@@ -34,6 +34,7 @@ function generateStatementsForEvent(
   nextEvent: RecordedEvent | null,
   stepNumber: number,
   networkEntries: NetworkEntry[],
+  allEvents: RecordedEvent[],
 ): string[] {
   const lines: string[] = [];
 
@@ -64,7 +65,14 @@ function generateStatementsForEvent(
   } else if (event.type === "dblclick") {
     lines.push(INDENT + "await " + locatorExpression + ".dblclick();");
   } else if (event.type === "input") {
-    if (event.valueWasRedacted) {
+    if (event.value === "[FILE_UPLOAD]") {
+      lines.push(
+        INDENT + "// The tester chose a file here. A recording cannot replay a "
+        + "file from their machine, so supply one yourself:");
+      lines.push(
+        INDENT + "// await " + locatorExpression
+        + ".setInputFiles('path/to/your/file');");
+    } else if (event.valueWasRedacted) {
       lines.push(
         INDENT + "// The recorded value was redacted because the field looked "
         + "sensitive. Supply it from the environment instead.");
@@ -119,7 +127,8 @@ function generateStatementsForEvent(
     lines.push(INDENT + "await page.waitForURL(" + quote(nextEvent.pageUrl) + ");");
   }
 
-  const failureComment: string = buildFailureComment(event, networkEntries);
+  const failureComment: string =
+    buildFailureComment(event, networkEntries, allEvents);
   if (failureComment !== "") {
     lines.push(INDENT + failureComment);
   }
@@ -197,6 +206,7 @@ export function generatePlaywrightSpec(
       nextEventAfter(usableEvents, index),
       stepNumber,
       networkEntries,
+      usableEvents,
     );
     for (let lineIndex = 0; lineIndex < statementLines.length; lineIndex = lineIndex + 1) {
       lines.push(statementLines[lineIndex]);

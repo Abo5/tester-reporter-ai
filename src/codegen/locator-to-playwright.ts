@@ -170,8 +170,14 @@ export function buildLocatorComments(locator: ElementLocator): string[] {
     }
   }
 
-  if (locator.strategy === "role-and-name" || locator.strategy === "exact-text"
-      || locator.strategy === "label" || locator.strategy === "placeholder") {
+  // Text-based locators embed the rendered string, so they will not match the
+  // other language build. A test id will, which is exactly why it ranks first.
+  const isTextBased: boolean =
+    locator.strategy === "role-and-name" || locator.strategy === "exact-text"
+    || locator.strategy === "label" || locator.strategy === "placeholder"
+    || locator.strategy === "alt-text" || locator.strategy === "title";
+
+  if (isTextBased) {
     comments.push(
       "// This locator matches the text as it was rendered during recording. "
       + "Re-record or edit it for the other language build.");
@@ -183,7 +189,16 @@ export function buildLocatorComments(locator: ElementLocator): string[] {
       + "pierce open shadow roots automatically.");
   }
 
-  if (locator.isInsideRepeatedList && locator.listRowAnchorText === "") {
+  // Only warn when the locator really IS positional. An element that sits among
+  // siblings but carries a unique test id, accessible name or unique text is
+  // not positional at all, and a false warning on the most reliable locator we
+  // have teaches testers to ignore warnings.
+  const isPositional: boolean =
+    locator.isInsideRepeatedList
+    && locator.listRowAnchorText === ""
+    && (locator.strategy === "css-path" || locator.strategy === "xpath");
+
+  if (isPositional) {
     comments.push(
       "// WARNING: positional locator inside a list. This targets whatever is "
       + "in that position, which may not be the same row after the data changes.");
