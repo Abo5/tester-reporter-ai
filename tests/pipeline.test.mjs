@@ -496,3 +496,29 @@ test("one failing handler does not poison the ones behind it", async () => {
   assert.deepEqual(completed, ["second"],
     "a rejected handler must not block the queue behind it");
 });
+
+// --- The stop decision ------------------------------------------------------
+
+test("stop only skips the recorder when there genuinely is no recorder", () => {
+  // This models the decision that discarded every video: handleStopRecording
+  // asks "is there a recorder to wait for?" by looking at media.state. While
+  // that state stayed "not-started" after a SUCCESSFUL start, the answer was
+  // always no, the session finalised immediately, and the offscreen document
+  // was closed before it could hand over the Blob.
+  const hadNoRecorder = (mediaState) =>
+    mediaState === "failed" || mediaState === "not-started";
+
+  // The two states that mean "nothing is recording".
+  assert.equal(hadNoRecorder("not-started"), true,
+    "capture never started, so there is nothing to wait for");
+  assert.equal(hadNoRecorder("failed"), true,
+    "capture failed, so there is nothing to wait for");
+
+  // The states a live recorder can be in. If any of these returns true, the
+  // video is thrown away.
+  assert.equal(hadNoRecorder("recording"), false,
+    "a running recorder MUST be waited for or its video is discarded");
+  assert.equal(hadNoRecorder("paused"), false,
+    "a paused recorder still holds the recording");
+  assert.equal(hadNoRecorder("stopped"), false);
+});

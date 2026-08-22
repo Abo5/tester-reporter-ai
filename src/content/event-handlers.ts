@@ -607,8 +607,15 @@ export function handleKeyDown(nativeEvent: KeyboardEvent): void {
     return;
   }
 
+  // EVERY recorded key has to flush first, not just Enter.
+  //
+  // Tab and Escape both act on a field the tester has just typed into, and
+  // leaving the buffer unflushed recorded the key press BEFORE the value. The
+  // generated spec then tabbed out of an empty field and filled it afterwards,
+  // which is not what happened and often not even valid.
+  flushPendingInput();
+
   if (nativeEvent.key === "Enter") {
-    flushPendingInput();
     lastEnterPressWallClockMs = Date.now();
   }
 

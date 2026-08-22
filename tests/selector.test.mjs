@@ -232,3 +232,24 @@ test("element context captures ARIA state, lang, dir and siblings", async () => 
   assert.ok(context.siblingHtml.join(" ").includes("Alpha"));
   assert.ok(context.siblingHtml.join(" ").includes("Gamma"));
 });
+
+test("an xpath candidate reports the match count it actually has", async () => {
+  installDom(`<html><body>
+    <div><span>one</span><span>two</span></div>
+  </body></html>`);
+  const api = await import("../dist-test/test-api.mjs");
+
+  const element = document.querySelectorAll("span")[1];
+  const locator = api.getElementSelector(element);
+
+  const xpath = [locator.primary, ...locator.fallbacks]
+    .find((c) => c.strategy === "xpath");
+  assert.ok(xpath, "no xpath candidate was produced");
+
+  // The old code hardcoded matchCount 1 "by construction" without ever
+  // evaluating the expression, which suppressed the ambiguity warning and made
+  // an unverified path look checked.
+  assert.equal(typeof xpath.matchCount, "number");
+  assert.equal(xpath.isUniqueAtCaptureTime, xpath.matchCount === 1,
+    "uniqueness must follow from the measured count, not be asserted");
+});

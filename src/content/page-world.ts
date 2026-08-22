@@ -114,27 +114,42 @@ function patchFetch(): void {
     try {
       const response: Response = await originalFetch.call(window, input, init);
 
-      let responseBodyExcerpt: string = "";
+      // Read the body from a CLONE, without awaiting it here.
+      //
+      // Awaiting the clone before returning would hold the application's own
+      // response until the entire body had been buffered - turning a streamed
+      // response into a buffered one, delaying every request the page makes,
+      // and breaking server-sent events outright. A QA tool that changes the
+      // timing of the thing it is measuring is worse than useless.
+      let clonedResponse: Response | null = null;
       try {
-        const clonedResponse: Response = response.clone();
-        const bodyText: string = await clonedResponse.text();
-        responseBodyExcerpt = truncateText(bodyText, MAX_BODY_EXCERPT_CHARACTERS);
-      } catch (bodyReadError: unknown) {
-        responseBodyExcerpt = "";   // Opaque or streaming response.
+        clonedResponse = response.clone();
+      } catch (cloneError: unknown) {
+        clonedResponse = null;   // Body already consumed, or opaque.
       }
 
-      postToBridge("network", {
-        method: described.method,
-        url: described.url,
-        statusCode: response.status,
-        statusText: response.statusText,
-        startedAtMs: startedAtMs,
-        durationMs: Date.now() - startedAtMs,
-        requestBodyExcerpt: requestBodyExcerpt,
-        responseBodyExcerpt: responseBodyExcerpt,
-        responseContentType: response.headers.get("content-type") ?? "",
-        pageUrl: window.location.href,
-      });
+      const reportWithBody = function reportWithBody(bodyText: string): void {
+        postToBridge("network", {
+          method: described.method,
+          url: described.url,
+          statusCode: response.status,
+          statusText: response.statusText,
+          startedAtMs: startedAtMs,
+          durationMs: Date.now() - startedAtMs,
+          requestBodyExcerpt: requestBodyExcerpt,
+          responseBodyExcerpt: truncateText(bodyText, MAX_BODY_EXCERPT_CHARACTERS),
+          responseContentType: response.headers.get("content-type") ?? "",
+          pageUrl: window.location.href,
+        });
+      };
+
+      if (clonedResponse === null) {
+        reportWithBody("");
+      } else {
+        void clonedResponse.text().then(reportWithBody, function onBodyError(): void {
+          reportWithBody("");
+        });
+      }
 
       return response;
     } catch (networkError: unknown) {
@@ -177,6 +192,9 @@ function patchXmlHttpRequest(): void {
   const recordByInstance: WeakMap<XMLHttpRequest, XhrRecord> =
     new WeakMap<XMLHttpRequest, XhrRecord>();
 
+  /** Instances that already have a loadend listener attached. */
+  const listeningInstances: WeakSet<XMLHttpRequest> = new WeakSet<XMLHttpRequest>();
+
   const originalOpen = OriginalXhr.prototype.open;
   const originalSend = OriginalXhr.prototype.send;
 
@@ -207,6 +225,16 @@ function patchXmlHttpRequest(): void {
       } else if (body !== undefined && body !== null) {
         record.requestBodyExcerpt = "[non-text body]";
       }
+
+      // Attach the listener ONCE per instance. An application that reuses one
+      // XMLHttpRequest object for several requests - which is legal and still
+      // common - would otherwise accumulate a listener per send() and report
+      // the same response two, three, four times.
+      const alreadyListening = listeningInstances.has(this);
+      if (alreadyListening) {
+        return originalSend.apply(this, arguments as unknown as Parameters<typeof originalSend>);
+      }
+      listeningInstances.add(this);
 
       this.addEventListener("loadend", function onLoadEnd(this: XMLHttpRequest): void {
         let responseBodyExcerpt: string = "";

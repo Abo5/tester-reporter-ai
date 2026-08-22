@@ -440,3 +440,53 @@ test("an unrelated later navigation still emits a goto", () => {
   assert.ok(spec.includes("await page.goto('https://example.test/other');"),
     "a navigation the click did not cause must still be replayed");
 });
+
+// --- Regressions from the adversarial review --------------------------------
+
+test("getByTestId is only used for data-testid, never data-qa or data-cy", () => {
+  // Playwright's getByTestId resolves against ONE attribute. Emitting it for a
+  // data-qa element produces a locator that matches nothing, in a spec that
+  // looks perfectly correct.
+  for (const [attribute, expectTestId] of [
+    ["data-testid", true], ["data-qa", false],
+    ["data-cy", false], ["data-test", false],
+  ]) {
+    const locator = makeLocator({
+      strategy: "test-id",
+      primary: {
+        strategy: "test-id", value: `[${attribute}="save"]`, role: "",
+        matchCount: 1, isUniqueAtCaptureTime: true,
+      },
+    });
+    const expression = api.locatorToPlaywrightExpression(locator);
+
+    if (expectTestId) {
+      assert.ok(expression.includes("getByTestId('save')"),
+        `data-testid should use getByTestId, got: ${expression}`);
+    } else {
+      assert.ok(!expression.includes("getByTestId"),
+        `${attribute} must NOT use getByTestId - it would match nothing. `
+          + `Got: ${expression}`);
+      assert.ok(expression.includes(`[${attribute}="save"]`),
+        `${attribute} should fall back to an attribute selector: ${expression}`);
+    }
+  }
+});
+
+test("a url-change step does not delete the navigation that follows it", () => {
+  // The pre-await flag used to be inferred by looking for "waitForURL(" in the
+  // emitted text. A url-change emits one for ITSELF, which set the flag to the
+  // NEXT step's URL and silently dropped it.
+  const events = [
+    makeEvent(1, "url-change", { wallClockMs: 1000, pageUrl: "https://x.test/a" }),
+    makeEvent(2, "navigate", { wallClockMs: 8000, pageUrl: "https://x.test/b" }),
+    makeEvent(3, "click", { wallClockMs: 9000, locator: makeLocator() }),
+  ];
+
+  const spec = api.generatePlaywrightSpec(SESSION, events, []);
+
+  assert.ok(spec.includes("waitForURL('https://x.test/a')"),
+    "the SPA route change should still be waited for");
+  assert.ok(spec.includes("goto('https://x.test/b')"),
+    "the later navigation was silently deleted");
+});

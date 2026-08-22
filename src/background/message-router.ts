@@ -693,6 +693,25 @@ export async function runRetentionCleanup(): Promise<void> {
 }
 
 /**
+ * Records that the offscreen recorder actually started.
+ *
+ * WHY this is not just a log line: the session's media.state is what
+ * handleStopRecording() consults to decide whether there is a recorder to wait
+ * for. Leaving it at "not-started" after a successful start made every stop
+ * take the no-recorder path, finalise immediately, and close the offscreen
+ * document before it could hand over the Blob - discarding the video on every
+ * successful recording.
+ */
+async function handleOffscreenReady(info: MediaRecordInfo): Promise<void> {
+  const state: ActiveRecordingState | null = await readActiveState();
+  if (state === null) {
+    return;
+  }
+  await updateSession(state.sessionId, { media: info });
+  logInfo("router", "Offscreen recorder is running (" + info.mimeType + ").");
+}
+
+/**
  * Handles the offscreen document reporting a finished recording.
  */
 async function handleOffscreenFinished(
@@ -1017,7 +1036,7 @@ async function routeMessage(
       return { ok: true };
 
     case "offscreen/ready":
-      logInfo("router", "Offscreen recorder is ready.");
+      await handleOffscreenReady(message.info);
       return { ok: true };
 
     // Messages the service worker SENDS but never handles.

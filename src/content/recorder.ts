@@ -229,6 +229,10 @@ function installEventListeners(): void {
   document.addEventListener("mouseover", handleMouseOver, true);
   document.addEventListener("scroll", handleScroll, { capture: true, passive: true });
 
+  // Leaving a field finishes its value. Without this, clicking straight from
+  // one input to a button recorded the click first and the typed value after.
+  document.addEventListener("blur", flushPendingInput, true);
+
   // A pending keystroke buffer must be flushed before the document goes away.
   window.addEventListener("beforeunload", flushPendingInput, true);
   window.addEventListener("pagehide", flushPendingInput, true);

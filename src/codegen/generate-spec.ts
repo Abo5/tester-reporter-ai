@@ -36,6 +36,7 @@ function generateStatementsForEvent(
   networkEntries: NetworkEntry[],
   allEvents: RecordedEvent[],
   alreadyAwaitedUrl: string,
+  preAwaitedNextUrl: { value: string },
 ): string[] {
   const lines: string[] = [];
 
@@ -134,6 +135,7 @@ function generateStatementsForEvent(
 
   if (causedNavigation && nextEvent !== null) {
     lines.push(INDENT + "await page.waitForURL(" + quote(nextEvent.pageUrl) + ");");
+    preAwaitedNextUrl.value = nextEvent.pageUrl;
   }
 
   const failureComment: string =
@@ -212,9 +214,16 @@ export function generatePlaywrightSpec(
 
     // Skip a leading navigation to the URL we already opened above.
     if (index === 0 && event.type === "navigate" && event.pageUrl === startUrl) {
-      alreadyAwaitedUrl = "";
       continue;
     }
+
+    // The generator reports back which URL it pre-awaited FOR THE NEXT STEP.
+    //
+    // An earlier version worked this out by looking for "waitForURL(" in the
+    // emitted text, which was wrong: a url-change step emits a waitForURL for
+    // ITSELF, and the flag was then set to the following step's URL, silently
+    // deleting a navigation nobody had waited for.
+    const preAwaitedNextUrl: { value: string } = { value: "" };
 
     const statementLines: string[] = generateStatementsForEvent(
       event,
@@ -223,14 +232,10 @@ export function generatePlaywrightSpec(
       networkEntries,
       usableEvents,
       alreadyAwaitedUrl,
+      preAwaitedNextUrl,
     );
 
-    // Remember whether THIS step emitted a wait the next one should honour.
-    const emittedWait: boolean = statementLines.some(
-      function isWait(line: string): boolean {
-        return line.includes("await page.waitForURL(");
-      });
-    alreadyAwaitedUrl = emittedWait && nextEvent !== null ? nextEvent.pageUrl : "";
+    alreadyAwaitedUrl = preAwaitedNextUrl.value;
 
     if (statementLines.length === 0) {
       continue;   // Nothing emitted, so this is not a step the reader counts.

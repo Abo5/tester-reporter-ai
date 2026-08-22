@@ -41,6 +41,21 @@ export function quote(value: string): string {
 }
 
 /**
+ * Pulls the ATTRIBUTE NAME out of a [data-testid="x"] style selector.
+ * Returns "" when the selector is not in that shape.
+ */
+function extractTestIdAttributeName(attributeSelector: string): string {
+  if (!attributeSelector.startsWith("[")) {
+    return "";
+  }
+  const equalsIndex: number = attributeSelector.indexOf("=");
+  if (equalsIndex === -1) {
+    return "";
+  }
+  return attributeSelector.slice(1, equalsIndex).trim();
+}
+
+/**
  * Pulls the raw id out of a [data-testid="x"] style selector.
  * Returns "" when the selector is not in that shape.
  */
@@ -70,10 +85,15 @@ function buildFrameChainExpression(framePath: FrameStep[]): string {
  */
 function candidateToExpression(candidate: LocatorCandidate): string {
   if (candidate.strategy === "test-id") {
-    // getByTestId reads far better in a spec a non-developer has to understand
-    // than a raw attribute selector does.
+    // getByTestId resolves against ONE attribute - data-testid unless the
+    // project configures otherwise - so it is only correct when that is the
+    // attribute we actually matched. For data-qa, data-cy and the rest, an
+    // attribute selector is the honest choice: getByTestId would produce a
+    // locator that matches nothing, in a spec that looks perfectly correct.
+    const attributeName: string = extractTestIdAttributeName(candidate.value);
     const rawId: string = extractTestIdValue(candidate.value);
-    if (rawId !== "") {
+
+    if (attributeName === "data-testid" && rawId !== "") {
       return ".getByTestId(" + quote(rawId) + ")";
     }
     return ".locator(" + quote(candidate.value) + ")";

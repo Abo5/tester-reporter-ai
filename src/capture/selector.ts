@@ -402,13 +402,50 @@ function buildXPathCandidate(element: Element): LocatorCandidate {
     currentElement = currentElement.parentElement;
   }
 
+  const xpath: string = "/" + segments.join("/");
+
+  // Actually evaluate it rather than asserting uniqueness by construction.
+  // The old code hardcoded matchCount 1, which is usually true for an absolute
+  // path but is a claim we never checked - and it suppressed the "matched N
+  // elements" warning that would have told a tester the locator was wrong.
+  const matchCount: number = countXPathMatches(element, xpath);
+
   return {
     strategy: "xpath",
-    value: "/" + segments.join("/"),
+    value: xpath,
     role: "",
-    matchCount: 1,   // An absolute XPath matches at most one node by construction.
-    isUniqueAtCaptureTime: true,
+    matchCount: matchCount,
+    isUniqueAtCaptureTime: matchCount === 1,
   };
+}
+
+/**
+ * Counts how many nodes an XPath expression selects.
+ * Returns 0 when the document has no XPath support or the expression is
+ * invalid, so an unverifiable path is never promoted as "unique".
+ */
+function countXPathMatches(element: Element, xpath: string): number {
+  const ownerDocument: Document = element.ownerDocument;
+  const evaluator = (ownerDocument as unknown as {
+    evaluate?: (
+      expression: string, contextNode: Node, resolver: null,
+      type: number, result: null,
+    ) => { snapshotLength: number };
+  }).evaluate;
+
+  if (typeof evaluator !== "function") {
+    return 0;
+  }
+
+  try {
+    // 7 is XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, spelled out because the
+    // XPathResult global is not present in every context this file runs in.
+    const result = evaluator.call(
+      ownerDocument, xpath, ownerDocument, null, 7, null);
+    return result.snapshotLength;
+  } catch (evaluationError: unknown) {
+    return 0;
+  }
 }
 
 /**
