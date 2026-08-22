@@ -27,6 +27,7 @@ export {
   compileCustomPatterns,
 } from "../src/ai/redact";
 export { validateBugReport, reconcileEvidenceUsed } from "../src/ai/validate";
+export { generateBugReport, resolveModelId } from "../src/ai/gemini";
 export { formatReportAsPlainText, formatReportWithMetadata } from "../src/ai/format";
 export { BUG_REPORT_RESPONSE_SCHEMA, schemaPropertyNames } from "../src/ai/schema";
 export {

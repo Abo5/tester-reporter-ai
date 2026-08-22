@@ -3,3 +3,10 @@ dist/
 *.log
 .DS_Store
 dist-test/
+
+# Secrets. NEVER commit these.
+# .env holds the tester's own Gemini API key for the live integration test.
+.env
+.env.local
+.env.*.local
+!.env.example

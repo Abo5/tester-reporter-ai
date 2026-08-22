@@ -75,7 +75,8 @@ the written report needs one.
 | `npm run build:watch` | Rebuilds on change, with sourcemaps |
 | `npm run typecheck` | `tsc --noEmit`, strict mode |
 | `npm test` | Bundles the test API and runs the suite |
-| `npm run verify` | All three, in order |
+| `npm run verify` | All three, in order (never touches the network) |
+| `npm run test:live` | **The one test that calls the real Gemini API.** Needs a key in `.env` |
 | `npm run clean` | Removes `dist/` and `dist-test/` |
 
 ## Layout
@@ -214,9 +215,54 @@ PLAN.md.
   The extension does the transcription and leaves the judgement — inventing a
   specification would be worse than admitting the gap.
 
+## Talking to the real Gemini API
+
+Everything above runs offline. To check that a real model, given real evidence,
+returns a report this extension can actually use:
+
+```bash
+cp .env.example .env
+# put your Google AI Studio key in GEMINI_API_KEY
+npm run test:live
+```
+
+`.env` is gitignored and **is never read by the extension**. Node loads it itself
+via `--env-file-if-exists`; no code in this repository opens that file. The
+extension running in your browser reads its key from `chrome.storage.local`,
+set in its own Settings page — the two are completely separate.
+
+Without a key the live test **skips** rather than fails, so it never blocks a
+normal run.
+
+`.env` also carries `GEMINI_MODEL`. Use it to point at a model id you have
+actually verified, without editing code. If the id is not in `SUPPORTED_MODELS`
+the test registers it for that run and tells you the one-line change to make it
+permanent.
+
+**This is the test that tells you whether the `VERIFY` items are right.** It
+sends the tenant-search scenario — a 500, an `aria-invalid` field, and an error
+message that is in the DOM but not on screen — and then checks that the model:
+
+- returned JSON our validator accepts;
+- did **not** claim it watched a video (none was sent) — the exact hallucination
+  `reconcileEvidenceUsed()` exists to catch;
+- grounded the report in a captured fact (`500`, `Tenant ID must be 8 digits`,
+  `TN-40192`, `aria-invalid`, `tenant_not_found`) rather than inventing one;
+- either derived Expected Behavior or used the required sentence byte for byte.
+
+It prints the finished report and the anti-hallucination fields, so you can read
+what the model actually said. The assertions are deliberately tolerant about
+wording — asserting exact model prose would be a flaky test that teaches you
+nothing.
+
+If it fails with `http-error` 404, the model id is wrong. If it fails with
+`malformed-json`, the structured-output parameter names need checking against
+current documentation.
+
 ## Testing
 
-85 tests, no browser required. jsdom is a test-only dependency.
+85 offline tests, no browser and no API key required. jsdom is a test-only
+dependency.
 
 The load-bearing one is in [`tests/prune-dom.test.mjs`](tests/prune-dom.test.mjs):
 given a catalog page whose tabs read *"Contract Renewal & Continuation"* and

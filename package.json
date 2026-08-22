@@ -11,7 +11,8 @@
     "test": "node scripts/build-tests.mjs && node --test tests/*.test.mjs",
     "clean": "rm -rf dist dist-test",
     "verify": "npm run typecheck && npm run build && npm run test",
-    "build:tests": "node scripts/build-tests.mjs"
+    "build:tests": "node scripts/build-tests.mjs",
+    "test:live": "node scripts/build-tests.mjs && node --env-file-if-exists=.env --test tests/live/*.live.mjs"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.287",
