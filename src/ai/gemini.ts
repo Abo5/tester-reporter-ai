@@ -74,6 +74,27 @@ export function resolveModelId(requestedModelId: string): string {
   return DEFAULT_MODEL_ID;
 }
 
+/**
+ * Pulls the human-readable part out of an API error body.
+ *
+ * The raw body is a nested JSON envelope; the useful sentence is one field
+ * inside it. Showing the envelope teaches the tester nothing, and showing
+ * nothing teaches them less.
+ */
+function summariseApiError(errorText: string): string {
+  try {
+    const parsed: unknown = JSON.parse(errorText);
+    const typed = parsed as { error?: { message?: string; status?: string } };
+    const message: string = typed.error?.message ?? "";
+    if (message !== "") {
+      return message.slice(0, 400);
+    }
+  } catch (parseError: unknown) {
+    // Not JSON; fall through to the raw text.
+  }
+  return errorText.replace(/\s+/g, " ").slice(0, 400);
+}
+
 /** Sleeps for a number of milliseconds. Used only for retry backoff. */
 function delay(milliseconds: number): Promise<void> {
   return new Promise<void>(function executor(resolve): void {
@@ -84,14 +105,16 @@ function delay(milliseconds: number): Promise<void> {
 /**
  * Uploads the video to the Files API and returns its URI.
  *
- * VERIFY: THIS ENTIRE FUNCTION IS A SKETCH OF THE FLOW, NOT VERIFIED CODE. The
- * shape below is a two-step resumable upload: a POST that starts the upload and
- * returns an upload URL in a response header, then a second request carrying
- * the bytes. The header names, the response shape, the field that holds the file
- * URI, and the retention period must ALL be read from current documentation.
- * Do not ship this from memory.
+ * VERIFIED against the live API: the two-step resumable upload below works as
+ * written. A real MP4 uploaded, reached state ACTIVE, was read back by the model
+ * through its file_uri, and was deleted again. See
+ * tests/live/files-api.live.mjs, which exercises exactly this function.
+ *
+ * Still worth checking against current documentation before relying on it in
+ * production: the retention period for an uploaded file, and whether the upload
+ * URL header name is stable across API versions.
  */
-async function uploadVideoToFilesApi(
+export async function uploadVideoToFilesApi(
   apiKey: string,
   videoBlob: Blob,
   mimeType: string,
@@ -157,9 +180,9 @@ async function uploadVideoToFilesApi(
  * WHY we bother: there is no reason for a QA recording of a staging environment
  * to sit on someone else's storage a minute longer than the request needs it.
  *
- * VERIFY: the delete endpoint path and whether the Files API exposes one at
- * all. Failure here is logged and ignored: the report has already been produced
- * and the tester should not see an error about cleanup.
+ * VERIFIED: deleting by the file URI works. Failure here is still logged and
+ * ignored, because the report has already been produced and the tester should
+ * not see an error about cleanup.
  */
 export async function deleteUploadedFile(
   apiKey: string,
@@ -447,6 +470,9 @@ export async function generateBugReport(
           logWarning("gemini",
             "400 while sending video; retrying without it.", errorText.slice(0, 300));
 
+          // Carry the service's own words through to the tester. "The request
+          // was rejected" is not something anyone can act on; the reason -
+          // duration limit, unsupported codec, payload size - usually is.
           workingBundle = {
             ...workingBundle,
             video: {
@@ -455,7 +481,8 @@ export async function generateBugReport(
               downgradeReason:
                 "The AI service rejected the request while it carried the "
                 + "video, so the report was written from the page code and the "
-                + "action script only.",
+                + "action script only. The service said: "
+                + summariseApiError(errorText),
             },
           };
           requestBody = buildRequestBody(workingBundle, "");

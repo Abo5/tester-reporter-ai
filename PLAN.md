@@ -46,14 +46,14 @@ been run, and they are settled.
 | V2 | `generateContent` endpoint path and request body shape | Gemini API reference | ✅ **CONFIRMED** by live test |
 | V3 | Exact parameter names for structured JSON output (`responseMimeType` + `responseSchema` under `generationConfig`) | Gemini API structured-output docs | ✅ **CONFIRMED** by live test |
 | V4 | Parameter name for thinking / reasoning level, and whether this model has one | Gemini API docs | ⬜ still open |
-| V5 | Supported video MIME types (is `video/webm` accepted?) and max duration | Gemini API video docs | ⬜ still open — no video was captured under test |
-| V6 | Inline base64 size threshold vs. Files API — and the Files API upload flow and retention window | Gemini API files docs | ⬜ still open — the Files API upload path is still unexercised |
+| V5 | Supported video MIME types and max duration | Gemini API video docs | ✅ **CONFIRMED** — a real `video/mp4;codecs=vp9,opus` recording was accepted and analysed |
+| V6 | Inline base64 threshold vs. Files API, and the upload flow | Gemini API files docs | ✅ **CONFIRMED** — inline works; the resumable upload reaches ACTIVE, is readable by `file_uri`, and deletes. Retention window still unread. |
 | V7 | Current price per 1M input tokens, per 1M output tokens, and how video seconds are tokenised | Gemini API pricing page | ⬜ still open |
 | V8 | `chrome.offscreen` reason enum values (`USER_MEDIA`, `DISPLAY_MEDIA`, `BLOBS`, …) | Chrome offscreen API docs | ✅ **CONFIRMED** — offscreen document created successfully under test |
 | V9 | `chrome.tabCapture.getMediaStreamId()` signature + the `getUserMedia` constraint shape used to consume the stream ID | Chrome tabCapture docs + offscreen recording sample | ✅ **ANSWERED** — requires prior invocation (activeTab); host permissions do not satisfy it. A keyboard command counts as an invocation, and the constraint shape is confirmed working up to the compositor. |
-| V10 | Whether a microphone permission prompt can be raised from an offscreen document, or must be pre-granted from a normal extension page | Chrome offscreen / permissions docs | ⬜ still open — microphone from an offscreen document was not exercised |
+| V10 | Whether a microphone permission prompt can be raised from an offscreen document | Chrome offscreen / permissions docs | ⬜ still open — this machine reports **zero** `audioinput` devices, so the question cannot be answered here |
 | V11 | MV3 service-worker idle-termination semantics as of the Chrome version you target | Chrome service worker lifecycle docs | ✅ **EXERCISED** — worker survives a full session; state in storage.session works |
-| V12 | `MediaRecorder.isTypeSupported('video/mp4;codecs=avc1…')` in your target Chrome | Test in the browser, not the docs | ⬜ still open — MediaRecorder MP4 support was not exercised |
+| V12 | `MediaRecorder` MP4 support in your target Chrome | Test in the browser, not the docs | ✅ **CONFIRMED** — Chromium 149 selected `video/mp4;codecs=vp9,opus` |
 | V13 | `content_scripts[].world: "MAIN"` minimum Chrome version | Chrome content scripts docs | ✅ **CONFIRMED** — world: MAIN content script runs at document_start |
 | V14 | Whether `chrome.webRequest` (non-blocking) still reports `statusCode` in `onCompleted`/`onErrorOccurred` in MV3 with only host permissions | Chrome webRequest docs | ✅ **CONFIRMED** — webRequest reports statusCode 500 under MV3 with host permissions |
 | V15 | Whether `fetch()` to `generativelanguage.googleapis.com` from an MV3 service worker needs the host in `host_permissions` (I assume yes) | Chrome CORS-for-extensions docs | ✅ **CONFIRMED** — fetch to generativelanguage.googleapis.com works from the extension |
@@ -8064,71 +8064,92 @@ the completed report against the current code.
 
 ---
 
-## 23. The video path — what the logs actually said
+## 23. The video path — solved
 
-Section 21.5 left the media path "armed but not completed", and blamed the missing
-compositor. That guess was wrong, and chasing it properly changed the product.
+This section previously concluded that this machine's Chromium could not capture a tab, and
+built product decisions on top of that. **It was wrong, and the cause was a flag in the
+test harness.** What follows is what actually happened, because the sequence is more useful
+than the conclusion.
 
-### 23.1 Ruling things out, in order
+### 23.1 A long chase up the wrong tree
 
-Chromium's own `--vmodule=*media_stream*=2` output settled every question that reading the
-code could not:
+Chromium's `--vmodule=*media_stream*=2` output ruled out one hypothesis after another: not
+the missing GPU (the same failure occurred on the real desktop), not the window size (the
+10×10 window was one of Chromium's *helper* windows — the real one was 1279×899 all along),
+not the legacy `mandatory` constraint dialect (accepted and translated correctly). What was
+left was `NO_HARDWARE` for audio and `NotFoundError` for video, on every display server,
+with and without audio. That looked conclusive: the machine cannot capture a tab.
 
-| Hypothesis | Test | Result |
-|---|---|---|
-| No GPU / no compositor under Xvfb | Ran on the real XWayland desktop | **Same failure.** Not the compositor. |
-| The window is too small to capture | Measured it: the X window really was **10×10** | A red herring — `xdotool --class chrom` was matching one of Chromium's 10×10 *helper* windows. The real browser window was 1279×899 all along. |
-| The legacy `mandatory` constraint dialect is gone | Read the log | Accepted and translated correctly to `{"mediaStreamSource":{"exact":["tab"]}}`. Not it. |
-| Audio is the problem | Read the log | **Half right.** `audio+video → NO_HARDWARE`. |
-| So retry without audio | Read the log | `video only → STREAM_NOT_FOUND_IN_REGISTRY`. |
-| …because the id is single-use | Minted a fresh one | `Cannot capture a tab with an active stream`. |
-| Then video-only from the start | Forced it, ran on both displays | `NotFoundError`. **This machine cannot capture a tab at all.** |
-
-### 23.2 Three things that were wrong in the code
-
-**The retry could never have worked.** It reused the stream id that the failed attempt had
-already spent. That is `STREAM_NOT_FOUND_IN_REGISTRY`, and it means the "fallback to
-video-only" added earlier never fell back to anything — it only changed which error the
-tester saw.
-
-**Nor could any retry.** A *failed* capture attempt leaves the tab registered as being
-captured, so every subsequent `getMediaStreamId` for it returns `Cannot capture a tab with
-an active stream`. There is exactly **one attempt per tab**, and it has to be right the
-first time. Verified at 0 ms, 750 ms and 2500 ms — the lock does not clear.
-
-**Which makes asking for tab audio a bad default.** It risks the entire video on every
-machine whose audio stack cannot be captured, to gain application sounds — while the thing
-that actually matters, the tester's spoken narration, comes from a *separate* microphone
-stream and is unaffected either way.
-
-### 23.3 What changed
-
-- **Tab audio is now opt-in**, off by default, with the trade-off spelled out in Settings.
-  The default session is video + narration, which is what a bug report needs.
-- **The retry machinery is gone.** A mechanism that cannot succeed is worse than none: it
-  turns one clear failure into two confusing ones.
-- An audio-device probe was written and then **removed**. It reported two working
-  `audiooutput` devices on this machine while capture still failed with `NO_HARDWARE`, so
-  it predicted nothing. Keeping an unverified heuristic in the one code path that gets a
-  single attempt was not worth it.
-
-### 23.4 What is still not proven, stated plainly
-
-**Video has never been recorded on this machine, and nothing here changes that.** Chromium
-refuses to capture a tab on this hardware — Raspberry Pi, Chromium 149 under Playwright, on
-Xvfb and XWayland alike. Everything *up to* the capture backend is proven working: the
-shortcut binds, the invocation grants `activeTab`, `getMediaStreamId` returns an id, and
-the offscreen document consumes it.
-
-So `MediaRecorder` output, the WebM/MP4 choice (V12), the microphone-from-offscreen
-question (V10), the Files API upload and the accepted video MIME types (V5, V6) remain
-open. They need one manual run on an ordinary desktop:
+It was not conclusive. **The harness passed `--use-fake-ui-for-media-stream`**, added early
+on to auto-accept the microphone prompt. That flag breaks `tabCapture` outright — it is a
+[documented incompatibility](https://github.com/cypress-io/cypress/issues/19958), and the
+symptoms it produces are exactly `NO_HARDWARE` and `NotFoundError`. Removing one line
+turned every failure green:
 
 ```
-npm run build
-# chrome://extensions -> Developer mode -> Load unpacked -> dist/
-# press Ctrl+Shift+E on any http(s) page, interact, press it again
+media: state=stopped  bytes=101398  mime=video/mp4;codecs=vp9  duration=4066ms  1024x720
 ```
 
-The honest summary: **the investigation did not make video work here, and it made video
-more likely to work everywhere else.**
+**The lesson is about method, not about Chrome.** Chromium's logs were read correctly and
+each hypothesis was tested honestly, but every one of them was about the *browser* — and
+the thing that was broken was the harness driving it. A search of the error string would
+have found the answer in minutes.
+
+### 23.2 A real bug the video path then exposed
+
+With capture working, the pipeline sent a real recording to Gemini and it was rejected:
+
+```
+Base64 decoding failed for "opus;base64,AAAAJGZ0eXBpc29t…"
+```
+
+`blobToBase64` split the data URL at the first comma. A recorded MIME type is
+`video/mp4;codecs=vp9,opus`, so the URL reads
+`data:video/mp4;codecs=vp9,opus;base64,AAAA…` and the first comma sits **inside the codec
+list**. Everything after it was sent as the payload.
+
+Nearly every recording has a multi-codec MIME type, so **inline video would have been
+rejected every single time in production** — and the extension would have blamed the video
+format and quietly produced a report without it. It now splits on `;base64,`.
+
+### 23.3 What is proven now
+
+| | |
+|---|---|
+| Tab capture, armed by the `Ctrl+Shift+E` shortcut | ✅ 100 KB MP4 from a real tab |
+| `MediaRecorder` container choice (V12) | ✅ Chromium 149 selects `video/mp4;codecs=vp9,opus` |
+| Tab audio | ✅ recorded, `hasTabAudio: true` |
+| **Pause and resume as ONE playable file** | ✅ 3 273 ms recorded across a 2 s pause — the pause is excluded, and the file decodes at 1280×900 |
+| Blob stored in IndexedDB and read back | ✅ byte-for-byte |
+| Video accepted by Gemini inline (V5) | ✅ `evidenceUsed.video: true`, all four badges lit |
+| Files API resumable upload (V6) | ✅ uploads, reaches ACTIVE, readable by `file_uri`, deletes |
+
+The `uploadVideoToFilesApi` comment that read *"a sketch of the flow, not verified code"*
+is gone, because `tests/live/files-api.live.mjs` now runs exactly that function against the
+live service.
+
+### 23.4 What the wrong diagnosis cost, and what it left behind
+
+Two changes were made on the strength of it and have been **reverted**: tab audio was
+switched to opt-in (it works fine, and is back on by default with the setting kept as an
+escape hatch), and an audio-device probe was written (it reported two working outputs while
+capture failed, so it predicted nothing).
+
+Three things from the chase were kept, because they are correct regardless:
+
+- **A `tabCapture` stream id is single use.** The old "retry without audio" reused a spent
+  id, so it never fell back to anything — it only changed which error the tester saw.
+- **A failed capture attempt locks the tab.** Every later `getMediaStreamId` returns
+  `Cannot capture a tab with an active stream`, at 0 ms, 750 ms and 2500 ms alike. There is
+  one attempt per tab, so the retry machinery was removed rather than fixed.
+- **API rejections now carry the service's own words** to the tester. "The request was
+  rejected" is not actionable; `Base64 decoding failed for …` is — it is what identified
+  the bug in 23.2.
+
+### 23.5 Still open
+
+**V10 only.** Whether an offscreen document can raise a microphone permission prompt
+cannot be answered here: this machine reports **zero** `audioinput` devices. The code path
+degrades correctly — the microphone is optional and its absence leaves a silent video
+rather than cancelling the session — but the grant question needs a machine with a
+microphone.

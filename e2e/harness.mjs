@@ -49,14 +49,14 @@ export async function launchWithExtension(options = {}) {
       // of a GPU.
       "--window-size=1280,900",
       "--window-position=0,0",
-      // Grant getUserMedia without a prompt so the microphone path can run on a
-      // machine with no hardware.
+      // NEITHER fake-media flag is set here, deliberately.
       //
-      // NOTE: --use-fake-device-for-media-stream is deliberately NOT set here.
-      // It substitutes a synthetic camera/microphone, and it also interferes
-      // with tabCapture's chromeMediaSource:"tab" constraint, which resolves to
-      // a NotFoundError when a fake device is in play.
-      "--use-fake-ui-for-media-stream",
+      // --use-fake-ui-for-media-stream auto-accepts getUserMedia prompts, which
+      // is convenient for the microphone - and it BREAKS tabCapture outright.
+      // With it set, chromeMediaSource:"tab" resolves to NO_HARDWARE for audio
+      // and NotFoundError for video, which is exactly the failure this suite
+      // spent a long time blaming on the compositor.
+      // See https://github.com/cypress-io/cypress/issues/19958
       "--autoplay-policy=no-user-gesture-required",
 
       ...(options.extraArgs ?? []),

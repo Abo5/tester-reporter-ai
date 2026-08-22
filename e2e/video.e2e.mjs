@@ -217,3 +217,104 @@ test("recording started by shortcut captures actual video", async (t) => {
 
   await page.close();
 });
+
+test("a recorded video survives pause and resume as ONE playable file", async (t) => {
+  const page = await browser.context.newPage();
+  await page.goto(`${server.url}/bench.html`, { waitUntil: "load" });
+  await page.bringToFront();
+  await page.waitForTimeout(700);
+
+  const delivered = await sendBrowserShortcut("ctrl+shift+e");
+  const started = delivered
+    ? await waitFor("recording to start", async () => {
+        const state = await readRecordingState(browser.serviceWorker);
+        return state?.status === "recording" ? state : null;
+      }, 12000).catch(() => null)
+    : null;
+
+  if (started === null) {
+    t.skip("could not arm recording in this environment");
+    await page.close();
+    return;
+  }
+
+  await page.click('[data-testid="tab-renewal"]');
+  await page.waitForTimeout(1500);
+
+  // Pause, do nothing for a while, resume, then act again. The paused stretch
+  // must NOT appear in the file, and the file must stay one valid recording.
+  await callExtension(extensionPage, { kind: "ui/pause-recording" });
+  await page.waitForTimeout(2000);
+  await callExtension(extensionPage, { kind: "ui/resume-recording" });
+
+  await page.fill("#tenant", "TN-40192");
+  await page.waitForTimeout(1500);
+
+  await callExtension(extensionPage, { kind: "ui/stop-recording" });
+
+  const session = await waitFor("session ready", async () => {
+    const sessions = await readStore(extensionPage, "sessions");
+    const s = sessions.sort((a, b) => b.startedAtMs - a.startedAtMs)[0];
+    return s && s.status !== "processing" && s.status !== "recording" ? s : null;
+  }, 45000);
+
+  console.log(`  paused session media: ${session.media.state} `
+    + `${session.media.sizeBytes} bytes, ${session.media.durationMs}ms recorded`);
+
+  if (session.media.state !== "stopped") {
+    t.skip("capture unavailable: " + session.media.failureReason);
+    await page.close();
+    return;
+  }
+
+  assert.ok(session.media.sizeBytes > 1000, "the paused recording is empty");
+
+  // Roughly 3 seconds of activity around a 2 second pause. The recorded
+  // duration must exclude the pause, or every video timestamp handed to the AI
+  // after it points at the wrong frame.
+  assert.ok(session.media.durationMs < 6000,
+    `the paused stretch was recorded: ${session.media.durationMs}ms for about `
+    + "3s of activity");
+
+  // And it must still be one decodable file, not two glued together.
+  const playable = await extensionPage.evaluate(async (mediaId) => {
+    const db = await new Promise((resolve, reject) => {
+      const request = indexedDB.open("tester-reporter-ai");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const record = await new Promise((resolve, reject) => {
+      const tx = db.transaction("media", "readonly");
+      const req = tx.objectStore("media").get(mediaId);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    if (!record?.blob) {
+      return { ok: false, why: "no blob" };
+    }
+    const url = URL.createObjectURL(record.blob);
+    const video = document.createElement("video");
+    video.muted = true;
+    video.src = url;
+    const result = await new Promise((resolve) => {
+      const timer = setTimeout(() => resolve({ ok: false, why: "metadata timeout" }), 15000);
+      video.onloadedmetadata = () => {
+        clearTimeout(timer);
+        resolve({ ok: true, width: video.videoWidth, height: video.videoHeight });
+      };
+      video.onerror = () => {
+        clearTimeout(timer);
+        resolve({ ok: false, why: "decode error" });
+      };
+    });
+    URL.revokeObjectURL(url);
+    return result;
+  }, session.media.mediaId);
+
+  console.log(`  decoded: ${JSON.stringify(playable)}`);
+  assert.ok(playable.ok, `the recording is not playable: ${playable.why}`);
+  assert.ok(playable.width > 0 && playable.height > 0,
+    "the recording decoded with no picture");
+
+  await page.close();
+});

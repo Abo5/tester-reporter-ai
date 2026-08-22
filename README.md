@@ -45,23 +45,25 @@ look at. The fix that matters is not the patch, it is the structural test that
 now plants a secret in *every* string of the bundle and reports where it
 survived.
 
-**Video has never been recorded on the development machine**, and the reason is
-now known rather than guessed. Chromium's own media logs show it refuses to
-capture a tab on this hardware — on a headless X server *and* on the real
-desktop, with and without audio. Everything up to that point is proven working:
-the `Ctrl+Shift+E` shortcut binds, the invocation grants `activeTab`,
-`getMediaStreamId` returns a stream, and the offscreen document consumes it.
+**The video path works end to end, and is tested.** A real tab is recorded to
+`video/mp4;codecs=vp9,opus`, survives pause and resume as one playable file,
+is stored in IndexedDB, and is accepted and analysed by Gemini — inline and via
+the Files API. `npm run test:e2e:video` and `npm run test:e2e:video-ai` cover it.
 
-Chasing it properly changed the product, which is section 23 of PLAN.md:
-**a failed capture attempt LOCKS the tab**, so there is exactly one attempt and
-no retry is possible. That makes asking for the tab's own audio a bad default —
-it risks the whole video on any machine whose audio cannot be captured, to gain
-application sounds, while your spoken narration is a separate stream and is
-unaffected. Tab audio is now opt-in, and a retry mechanism that could never have
-worked was removed.
+Getting there took a long detour that is worth knowing about, because the
+conclusion was wrong for a while: capture failed with `NO_HARDWARE` and
+`NotFoundError` on every display server, which looked like a hardware limit and
+was written up as one. The actual cause was `--use-fake-ui-for-media-stream` in
+the *test harness* — a documented incompatibility with `tabCapture`. Section 23
+of PLAN.md has the full sequence, including the real bug it then exposed: the
+base64 encoder split the data URL at the first comma, and a recorded MIME type
+contains one (`codecs=vp9,opus`), so **inline video would have been rejected
+every time in production**.
 
-`MediaRecorder` output, the WebM/MP4 choice and the Files API upload are one
-manual run on an ordinary desktop away.
+The one thing still unverified is whether an offscreen document can raise a
+microphone permission prompt: this machine reports zero audio *input* devices,
+so the question cannot be answered here. Narration is optional and its absence
+leaves a silent video rather than cancelling the session.
 
 **`uploadVideoToFilesApi` in [`src/ai/gemini.ts`](src/ai/gemini.ts) is still a
 sketch of the flow, not verified code**, and says so inline. The live test does
@@ -126,7 +128,8 @@ the written report needs one.
 | `npm run verify` | All three, in order (never touches the network) |
 | `npm run test:e2e` | 11 tests in a real Chromium, including the graded bench and the replay round-trip |
 | `npm run test:e2e:site` | Against the real OrangeHRM demo application |
-| `npm run test:e2e:video` | The media path, under Xvfb with a window manager |
+| `npm run test:e2e:video` | The media path: capture, pause/resume, playback |
+| `npm run test:e2e:video-ai` | A real recorded video sent to Gemini |
 | `npm run test:e2e:perf` | Capture overhead per click on a 600-row page |
 | `npm run test:live` | Five checks against the real Gemini API. Needs a key in `.env` |
 | `npm run test:e2e:ai` | The whole chain once: capture → redaction → Gemini → rendered report |

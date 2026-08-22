@@ -64,13 +64,12 @@
           <span>Also record the tab's own sound</span>
         </label>
         <p class="hint">
-          Off by default, on purpose. Chrome allows exactly one capture attempt
-          per tab: if it asks for the tab's audio on a machine whose audio cannot
-          be captured, the request fails outright and the tab is locked, so
-          <strong>you lose the video entirely</strong>. Your spoken narration is a
-          separate microphone stream and is never affected. Turn this on only if
-          you need to hear the application itself, and check that a video still
-          appears afterwards.
+          On by default, so you hear the application as well as your own
+          narration. Chrome allows exactly one capture attempt per tab, so on the
+          rare machine that cannot capture tab audio the whole request fails and
+          you get no video at all. If that happens, turn this off: you lose
+          application sounds and nothing else, because your narration is a
+          separate microphone stream.
         </p>
       </section>
 

@@ -33,7 +33,8 @@ export {
   normaliseExpectedBehavior,
   isNotDeterminableSentence,
 } from "../src/ai/validate";
-export { generateBugReport, resolveModelId } from "../src/ai/gemini";
+export { generateBugReport, resolveModelId, uploadVideoToFilesApi, deleteUploadedFile }
+  from "../src/ai/gemini";
 export { formatReportAsPlainText, formatReportWithMetadata } from "../src/ai/format";
 export { BUG_REPORT_RESPONSE_SCHEMA, schemaPropertyNames } from "../src/ai/schema";
 export {
@@ -46,7 +47,8 @@ export {
   findFailureEventIndexes,
   describeElementForModel,
 } from "../src/ai/bundle";
-export { chooseKeyFrameOffsets, isVideoMimeTypeSupported } from "../src/ai/video";
+export { chooseKeyFrameOffsets, isVideoMimeTypeSupported, extractBase64Payload }
+  from "../src/ai/video";
 export { SYSTEM_INSTRUCTION, buildEvidenceText, buildLanguageInstruction }
   from "../src/ai/prompt";
 

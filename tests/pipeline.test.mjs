@@ -619,3 +619,33 @@ test("with no failures the frames still span the whole session", async () => {
   assert.ok(offsets[offsets.length - 1] > 119000);
   assert.ok(offsets.length >= 2);
 });
+
+// --- Data URL parsing -------------------------------------------------------
+
+test("the base64 payload is found even when the MIME type contains a comma", async () => {
+  // A recorded MIME type is "video/mp4;codecs=vp9,opus", so splitting the data
+  // URL at the FIRST comma yields "opus;base64,AAAA..." as the payload. The API
+  // quoted exactly that back: Base64 decoding failed for "opus;base64,...".
+  // Nearly every recording has a multi-codec MIME type, so inline video was
+  // rejected every time and the extension blamed the video format.
+  const { extractBase64Payload } = await import("../dist-test/test-api.mjs");
+
+  const cases = [
+    ["data:video/mp4;codecs=vp9,opus;base64,AAAABBBB", "AAAABBBB"],
+    ["data:video/webm;codecs=vp8,opus;base64,QUJD", "QUJD"],
+    ['data:video/mp4;codecs="avc1.42E01E,mp4a.40.2";base64,WFla', "WFla"],
+    ["data:image/jpeg;base64,/9j/4AAQ", "/9j/4AAQ"],
+    ["data:video/webm;base64,SGVsbG8=", "SGVsbG8="],
+  ];
+
+  for (const [dataUrl, expected] of cases) {
+    assert.equal(extractBase64Payload(dataUrl), expected,
+      `wrong payload for ${dataUrl.slice(0, 48)}…`);
+  }
+});
+
+test("a payload with no base64 marker still parses, and junk returns null", async () => {
+  const { extractBase64Payload } = await import("../dist-test/test-api.mjs");
+  assert.equal(extractBase64Payload("data:text/plain,hello"), "hello");
+  assert.equal(extractBase64Payload("not-a-data-url"), null);
+});

@@ -65,19 +65,44 @@ export function blobToBase64(blob: Blob): Promise<string> {
   return new Promise<string>(function executor(resolve, reject): void {
     const reader: FileReader = new FileReader();
     reader.onloadend = function onLoadEnd(): void {
-      const dataUrl: string = String(reader.result);
-      const commaIndex: number = dataUrl.indexOf(",");
-      if (commaIndex === -1) {
+      const payload: string | null = extractBase64Payload(String(reader.result));
+      if (payload === null) {
         reject(new Error("Unexpected FileReader output while encoding the video."));
         return;
       }
-      resolve(dataUrl.slice(commaIndex + 1));
+      resolve(payload);
     };
     reader.onerror = function onError(): void {
       reject(reader.error ?? new Error("Could not read the recording."));
     };
     reader.readAsDataURL(blob);
   });
+}
+
+/**
+ * Returns the base64 payload of a data URL, or null if there is none.
+ *
+ * It splits on the ";base64," marker rather than on the first comma, because a
+ * recorded MIME type contains one: "video/mp4;codecs=vp9,opus" makes the URL
+ *     data:video/mp4;codecs=vp9,opus;base64,AAAA...
+ * and splitting at the first comma yields "opus;base64,AAAA..." as the payload.
+ * The API's reply was exactly that string, quoted back with "Base64 decoding
+ * failed" - and nearly every recording has a multi-codec MIME type.
+ */
+export function extractBase64Payload(dataUrl: string): string | null {
+  const marker: string = ";base64,";
+  const markerIndex: number = dataUrl.indexOf(marker);
+  if (markerIndex !== -1) {
+    return dataUrl.slice(markerIndex + marker.length);
+  }
+
+  // Not base64-encoded, or an unexpected shape. Fall back to the LAST comma,
+  // which is still safer than the first when the media type carries one.
+  const commaIndex: number = dataUrl.lastIndexOf(",");
+  if (commaIndex === -1) {
+    return null;
+  }
+  return dataUrl.slice(commaIndex + 1);
 }
 
 /**
@@ -220,9 +245,9 @@ export async function extractKeyFrames(
 
       context.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
       const dataUrl: string = canvas.toDataURL("image/jpeg", KEY_FRAME_JPEG_QUALITY);
-      const commaIndex: number = dataUrl.indexOf(",");
-      if (commaIndex !== -1) {
-        frames.push(dataUrl.slice(commaIndex + 1));
+      const payload: string | null = extractBase64Payload(dataUrl);
+      if (payload !== null) {
+        frames.push(payload);
         achievedOffsetsMs.push(offsetsMs[index]);
       }
     }
