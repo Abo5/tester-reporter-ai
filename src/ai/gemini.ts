@@ -19,7 +19,11 @@ import type {
 } from "../shared/types";
 import { SYSTEM_INSTRUCTION, buildEvidenceText } from "./prompt";
 import { BUG_REPORT_RESPONSE_SCHEMA } from "./schema";
-import { validateBugReport, reconcileEvidenceUsed } from "./validate";
+import {
+  validateBugReport,
+  reconcileEvidenceUsed,
+  normaliseExpectedBehavior,
+} from "./validate";
 import { downgradeVideoToKeyFrames } from "./video";
 import {
   SUPPORTED_MODELS,
@@ -504,7 +508,7 @@ export async function generateBugReport(
         || workingBundle.elementContext.length > 0;
 
       const reconciledReport: GeneratedBugReport = reconcileEvidenceUsed(
-        parsed as GeneratedBugReport,
+        normaliseExpectedBehavior(parsed as GeneratedBugReport),
         videoWasSent,
         networkOrConsoleWasSent,
         pageCodeWasSent,

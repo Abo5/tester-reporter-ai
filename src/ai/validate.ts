@@ -8,6 +8,57 @@
 import type { GeneratedBugReport } from "../shared/types";
 import { NOT_DETERMINABLE_SENTENCE } from "../shared/constants";
 
+/**
+ * Canonicalises a sentence for comparison: unify dashes, collapse whitespace,
+ * drop a trailing full stop, lower-case.
+ *
+ * WHY not just compare the strings: the required sentence contains an em dash,
+ * and a model that emits a hyphen or an en dash instead is not wrong about the
+ * defect. Failing the whole report over a dash - twice, after a retry - would
+ * turn the most common Expected Behavior outcome into the most common failure.
+ */
+function canonicaliseSentence(value: string): string {
+  let result: string = value.trim().toLowerCase();
+  result = result.split("\u2014").join("-");   // em dash
+  result = result.split("\u2013").join("-");   // en dash
+  result = result.split("\u2212").join("-");   // minus sign
+  result = result.replace(/\s+/g, " ");
+  while (result.endsWith(".")) {
+    result = result.slice(0, result.length - 1);
+  }
+  return result;
+}
+
+/**
+ * True when a value says the same thing as the required sentence.
+ */
+export function isNotDeterminableSentence(value: unknown): boolean {
+  if (typeof value !== "string") {
+    return false;
+  }
+  return canonicaliseSentence(value)
+    === canonicaliseSentence(NOT_DETERMINABLE_SENTENCE);
+}
+
+/**
+ * Rewrites the sentence to the canonical form when it matches loosely.
+ *
+ * The extension owns the template, so downstream consumers still see the exact
+ * agreed wording; the model is simply not punished for a dash.
+ */
+export function normaliseExpectedBehavior(report: GeneratedBugReport): GeneratedBugReport {
+  if (report.expectedBehaviorDeterminable === true) {
+    return report;
+  }
+  if (report.expectedBehavior === NOT_DETERMINABLE_SENTENCE) {
+    return report;
+  }
+  if (!isNotDeterminableSentence(report.expectedBehavior)) {
+    return report;
+  }
+  return { ...report, expectedBehavior: NOT_DETERMINABLE_SENTENCE };
+}
+
 export interface ValidationResult {
   isValid: boolean;
   problems: string[];
@@ -111,13 +162,13 @@ export function validateBugReport(candidate: unknown): ValidationResult {
   // model that sets the flag to false but writes a made-up expectation anyway
   // is exactly the failure this whole design is trying to prevent.
   if (report.expectedBehaviorDeterminable === false
-      && report.expectedBehavior !== NOT_DETERMINABLE_SENTENCE) {
+      && !isNotDeterminableSentence(report.expectedBehavior)) {
     problems.push(
       "expectedBehaviorDeterminable is false but expectedBehavior is not the "
       + "exact required sentence.");
   }
   if (report.expectedBehaviorDeterminable === true
-      && report.expectedBehavior === NOT_DETERMINABLE_SENTENCE) {
+      && isNotDeterminableSentence(report.expectedBehavior)) {
     problems.push(
       "expectedBehaviorDeterminable is true but expectedBehavior is the "
       + "not-determinable sentence.");

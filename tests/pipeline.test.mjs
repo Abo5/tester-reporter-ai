@@ -522,3 +522,59 @@ test("stop only skips the recorder when there genuinely is no recorder", () => {
     "a paused recorder still holds the recording");
   assert.equal(hadNoRecorder("stopped"), false);
 });
+
+// --- The not-determinable sentence ------------------------------------------
+
+test("the not-determinable sentence is matched despite dash and spacing drift", () => {
+  // The required sentence contains an em dash. A model that emits a hyphen is
+  // not wrong about the defect, and failing the whole report over it - twice,
+  // after a retry - would turn the most common Expected Behavior outcome into
+  // the most common failure.
+  const variants = [
+    api.NOT_DETERMINABLE_SENTENCE,
+    api.NOT_DETERMINABLE_SENTENCE.replace("—", "-"),
+    api.NOT_DETERMINABLE_SENTENCE.replace("—", "–"),
+    api.NOT_DETERMINABLE_SENTENCE.replace(/\s+/g, "  "),
+    api.NOT_DETERMINABLE_SENTENCE.toUpperCase(),
+    api.NOT_DETERMINABLE_SENTENCE + ".",
+    "  " + api.NOT_DETERMINABLE_SENTENCE + "  ",
+  ];
+  for (const variant of variants) {
+    assert.ok(api.isNotDeterminableSentence(variant),
+      `not recognised: ${JSON.stringify(variant)}`);
+  }
+});
+
+test("a genuinely different sentence is NOT accepted as not-determinable", () => {
+  assert.equal(api.isNotDeterminableSentence(
+    "The tabs should read exactly as in the approved design."), false);
+  assert.equal(api.isNotDeterminableSentence("Expected behavior unknown."), false);
+  assert.equal(api.isNotDeterminableSentence(""), false);
+});
+
+test("a loosely-matching sentence is rewritten to the exact required wording", () => {
+  // The extension owns the template, so downstream consumers still see the
+  // agreed wording byte for byte; the model is just not punished for a dash.
+  const drifted = {
+    ...makeReport(),
+    expectedBehaviorDeterminable: false,
+    expectedBehavior: api.NOT_DETERMINABLE_SENTENCE.replace("—", "-"),
+  };
+
+  const normalised = api.normaliseExpectedBehavior(drifted);
+  assert.equal(normalised.expectedBehavior, api.NOT_DETERMINABLE_SENTENCE);
+  assert.equal(api.validateBugReport(normalised).isValid, true);
+
+  // And validation now accepts the drifted form directly, without a retry.
+  assert.equal(api.validateBugReport(drifted).isValid, true);
+});
+
+test("normalisation never rewrites a real expected behaviour", () => {
+  const real = {
+    ...makeReport(),
+    expectedBehaviorDeterminable: true,
+    expectedBehavior: "The tabs should read exactly as in the approved design.",
+  };
+  assert.equal(api.normaliseExpectedBehavior(real).expectedBehavior,
+    "The tabs should read exactly as in the approved design.");
+});

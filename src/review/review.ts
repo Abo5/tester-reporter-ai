@@ -457,9 +457,15 @@ function renderReport(
   state: LoadedSession,
   report: GeneratedBugReport,
   videoWasSent: boolean,
+  isFreshlyGenerated: boolean,
 ): void {
+  // A freshly generated report always wins over the tester's earlier edits.
+  //
+  // Preferring editedReportText unconditionally meant that pressing Regenerate
+  // on a session they had already tidied up redisplayed the OLD text: a paid
+  // request that appeared to do nothing at all.
   const text: string =
-    state.session.editedReportText !== ""
+    !isFreshlyGenerated && state.session.editedReportText !== ""
       ? state.session.editedReportText
       : formatReportAsPlainText(report);
 
@@ -605,8 +611,13 @@ async function handleOutcome(
     });
     state.session.bugReport = outcome.report;
 
+    // A fresh result must replace the previous text, and the stored edit with
+    // it, or the next load would show the stale version again.
+    await updateSession(state.session.id, { editedReportText: "" });
+    state.session.editedReportText = "";
+
     renderBundle(outcome.bundleUsed);
-    renderReport(state, outcome.report, videoWasSent);
+    renderReport(state, outcome.report, videoWasSent, true);
 
     if (outcome.bundleUsed.video.downgradeReason !== "") {
       reportStatusText.textContent =
@@ -1017,6 +1028,7 @@ async function initialiseReviewPage(): Promise<void> {
       state,
       state.session.bugReport,
       state.session.lastVideoDeliveryMode !== "omitted",
+      false,
     );
     renderRedactionSummary(state.session.redactionSummary);
     return;

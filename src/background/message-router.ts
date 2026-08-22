@@ -712,12 +712,37 @@ async function handleOffscreenReady(info: MediaRecordInfo): Promise<void> {
 }
 
 /**
+ * True when an offscreen message belongs to the session that is running now.
+ *
+ * WHY it matters: handleOffscreenError and handleOffscreenFinished both call
+ * clearActiveState() and close the offscreen document. A message arriving late
+ * from a PREVIOUS session - a slow stop, a crashed recorder reporting after the
+ * tester already started again - would therefore tear down the recording
+ * currently in progress. The tester would watch their session end for no
+ * visible reason.
+ */
+async function isMessageForCurrentSession(sessionId: string): Promise<boolean> {
+  const state: ActiveRecordingState | null = await readActiveState();
+  if (state === null) {
+    // Nothing is running, so a completion message is finishing the session it
+    // names. That is the normal path.
+    return true;
+  }
+  return state.sessionId === sessionId;
+}
+
+/**
  * Handles the offscreen document reporting a finished recording.
  */
 async function handleOffscreenFinished(
   sessionId: string,
   info: MediaRecordInfo,
 ): Promise<void> {
+  if (!(await isMessageForCurrentSession(sessionId))) {
+    logWarning("router", "Ignoring a finish message from an older session.");
+    return;
+  }
+
   const state: ActiveRecordingState | null = await readActiveState();
   const recordedDurationMs: number =
     state === null ? info.durationMs : recordedDurationForState(state);
@@ -743,6 +768,11 @@ async function handleOffscreenFinished(
  */
 async function handleOffscreenError(sessionId: string, reason: string): Promise<void> {
   logWarning("router", "Offscreen error: " + reason);
+
+  if (!(await isMessageForCurrentSession(sessionId))) {
+    logWarning("router", "Ignoring an error from an older session.");
+    return;
+  }
 
   await generateScriptForSession(sessionId);
   const session = await getSession(sessionId);
@@ -955,16 +985,20 @@ async function routeMessage(
       await handleStartRecording(message.tabId, message.captureMicrophone);
       return { ok: true };
 
+    // Pause, resume and stop read-modify-write the same state the capture
+    // handlers do, so they join the same queue. Without this, a capture handler
+    // already in flight writes its stale copy back over a pause, silently
+    // un-pausing the event recorder while the MediaRecorder stays paused.
     case "ui/pause-recording":
-      await handlePauseRecording();
+      await withSerialisedState(handlePauseRecording);
       return { ok: true };
 
     case "ui/resume-recording":
-      await handleResumeRecording();
+      await withSerialisedState(handleResumeRecording);
       return { ok: true };
 
     case "ui/stop-recording":
-      await handleStopRecording();
+      await withSerialisedState(handleStopRecording);
       return { ok: true };
 
     case "ui/get-status":
