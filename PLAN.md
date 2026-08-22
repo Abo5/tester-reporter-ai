@@ -50,7 +50,7 @@ been run, and they are settled.
 | V6 | Inline base64 size threshold vs. Files API — and the Files API upload flow and retention window | Gemini API files docs | ⬜ still open — the Files API upload path is still unexercised |
 | V7 | Current price per 1M input tokens, per 1M output tokens, and how video seconds are tokenised | Gemini API pricing page | ⬜ still open |
 | V8 | `chrome.offscreen` reason enum values (`USER_MEDIA`, `DISPLAY_MEDIA`, `BLOBS`, …) | Chrome offscreen API docs | ✅ **CONFIRMED** — offscreen document created successfully under test |
-| V9 | `chrome.tabCapture.getMediaStreamId()` signature + the `getUserMedia` constraint shape used to consume the stream ID | Chrome tabCapture docs + offscreen recording sample | ✅ **ANSWERED** — getMediaStreamId REQUIRES prior invocation (activeTab); host permissions do not satisfy it |
+| V9 | `chrome.tabCapture.getMediaStreamId()` signature + the `getUserMedia` constraint shape used to consume the stream ID | Chrome tabCapture docs + offscreen recording sample | ✅ **ANSWERED** — requires prior invocation (activeTab); host permissions do not satisfy it. A keyboard command counts as an invocation, and the constraint shape is confirmed working up to the compositor. |
 | V10 | Whether a microphone permission prompt can be raised from an offscreen document, or must be pre-granted from a normal extension page | Chrome offscreen / permissions docs | ⬜ still open — microphone from an offscreen document was not exercised |
 | V11 | MV3 service-worker idle-termination semantics as of the Chrome version you target | Chrome service worker lifecycle docs | ✅ **EXERCISED** — worker survives a full session; state in storage.session works |
 | V12 | `MediaRecorder.isTypeSupported('video/mp4;codecs=avc1…')` in your target Chrome | Test in the browser, not the docs | ⬜ still open — MediaRecorder MP4 support was not exercised |
@@ -7871,3 +7871,83 @@ Honestly, and it is a short list:
   without it, and `evidenceUsed.video` comes back `false`.
 - **Pricing (V7)**, which is a documentation lookup, not a test.
 - **The thinking/reasoning parameter (V4)**, if this model has one.
+
+---
+
+## 21. The activeTab problem, and the shortcut that solves it
+
+This deserves its own section because it is the one Chrome rule that shaped a user-facing
+feature rather than an implementation detail.
+
+### 21.1 What the rule actually is
+
+`chrome.tabCapture.getMediaStreamId()` refuses to hand out a stream unless the extension
+has been **invoked** on that tab. Host permissions do not satisfy it — `<all_urls>` in
+`host_permissions` changes nothing. The error is:
+
+```
+Extension has not been invoked for the current page (see activeTab permission).
+```
+
+Chrome grants the invocation when the user clicks the toolbar icon, uses a context menu
+item, or **presses a registered keyboard command**. The grant is revoked when the tab
+navigates.
+
+### 21.2 Why that broke the original design twice over
+
+The plan had the side panel open via `setPanelBehavior({ openPanelOnActionClick: true })`.
+That is the short way to do it, and it makes Chrome open the panel and **swallow the
+click** — so `chrome.action.onClicked` never fires and the extension is never recorded as
+invoked. Every recording would have started without video, forever, with a confusing
+error.
+
+Worse, the failure was fatal rather than degraded: `handleStartRecording` let the capture
+error propagate, so the tester got no events, no page code and no script either. The
+"never lose the recording" invariant was being enforced one level below where it needed
+to be.
+
+### 21.3 The fix, in three parts
+
+1. **Handle the action click ourselves** and call `chrome.sidePanel.open()` from inside
+   the handler. The panel still opens; the invocation now registers.
+2. **Add a keyboard command** (`Ctrl+Shift+E` by default, rebindable at
+   `chrome://extensions/shortcuts`). This is the more reliable path in practice: the
+   tester presses it on the page they are already looking at, so there is no navigation
+   between the grant and the capture to revoke it.
+3. **Make video capture best-effort.** If the stream cannot be acquired for any reason,
+   the session records everything else and the side panel explains what to do.
+
+**A shortcut that does not bind is worse than no shortcut**, because the manifest claims
+it works. The first one chosen, `Alt+Shift+R`, registered as a command and Chrome bound no
+key to it at all — it is reserved. There is now a test asserting `chrome.commands.getAll()`
+reports a non-empty `shortcut`.
+
+### 21.4 Two media bugs the same work exposed
+
+**Tab capture asks for audio and video in one request, and a machine with no audio output
+device fails the WHOLE request** with `NotFoundError: Requested device not found` — not a
+warning about sound, no video at all. CI containers, headless runners and locked-down
+corporate images all hit this. Capture now retries video-only. This was confirmed by the
+error changing to a different one once the fallback was added.
+
+**The size hints were sharing the legacy `mandatory` constraint block** with the
+Chrome-specific `chromeMediaSource` keys. Testing showed this was *not* what caused the
+failure above — worth saying plainly, because the first hypothesis was that it was — but
+mixing deprecated constraint dialects in a call this fragile is not worth the risk, so the
+size limits moved to the standard `applyConstraints()`.
+
+### 21.5 What is proven, and what is not
+
+**Proven under test:** the command binds; pressing it grants activeTab; `getMediaStreamId`
+accepts the grant and returns a stream id; the offscreen document receives it and calls
+`getUserMedia`; the audio fallback works.
+
+**Not proven:** everything after that. Tab capture needs a compositor producing frames, and
+Xvfb on a machine with no GPU does not have one — capture ends in
+`AbortError: Error starting tab capture`. The test distinguishes that from a product defect
+and skips with instructions rather than reporting coverage it does not have.
+
+So `MediaRecorder` output, the WebM/MP4 choice (V12), the microphone-from-offscreen
+question (V10), the Files API upload and the accepted video MIME types (V5, V6) remain
+open. They are one manual run away: load `dist/`, press `Ctrl+Shift+E` on a normal page,
+interact, press it again, and look at the review page.

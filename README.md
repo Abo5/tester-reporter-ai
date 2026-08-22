@@ -36,12 +36,14 @@ one that silently dropped a recorded step every time a tester typed a value and
 pressed Enter. Section 20 of PLAN.md lists all eleven and why each was invisible
 offline.
 
-**What is still unproven is the video path.** `tabCapture` needs a real toolbar
-click, which a harness cannot synthesise, so no session under test produced a
-video — leaving the Files API upload, accepted video MIME types, MP4 recording
-and the microphone-from-offscreen question open. Everything *around* the video
-is proven: the failure degrades correctly, the report is still produced, and
-`evidenceUsed.video` comes back `false`.
+**The video path is armed but not completed under test.** Chrome only allows
+tab capture after the user *invokes* the extension, which is why there is now a
+`Ctrl+Shift+E` shortcut — pressing it grants the permission and starts
+recording. Testing proves the shortcut binds, the grant goes through and
+`tabCapture` hands over a stream. What it cannot prove is anything after that:
+capture needs a compositor producing frames, and a headless X server with no GPU
+has none. `MediaRecorder` output, the WebM/MP4 choice and the Files API upload
+are one manual run away. Section 21 of PLAN.md has the detail.
 
 **`uploadVideoToFilesApi` in [`src/ai/gemini.ts`](src/ai/gemini.ts) is still a
 sketch of the flow, not verified code**, and says so inline. The live test does
@@ -87,8 +89,12 @@ the written report needs one.
 3. Tick **Record microphone narration** if you want to say what looks wrong.
    (The first time, grant the microphone from Settings — an offscreen document
    cannot raise a permission prompt itself.)
-4. Press **Record**, do your normal test steps, press **Stop**.
-5. The review page opens by itself with the video, the step list, the generated
+4. Press **Record** — or press **Ctrl+Shift+E** on the page itself, which is
+   more reliable: Chrome only permits video capture after you *invoke* the
+   extension on that tab, and the shortcut does exactly that. Rebind it at
+   `chrome://extensions/shortcuts`.
+5. Do your normal test steps, then press **Stop** (or the shortcut again).
+6. The review page opens by itself with the video, the step list, the generated
    spec and the report.
 
 ## Scripts
@@ -102,6 +108,7 @@ the written report needs one.
 | `npm run verify` | All three, in order (never touches the network) |
 | `npm run test:e2e` | 11 tests in a real Chromium, including the graded bench and the replay round-trip |
 | `npm run test:e2e:site` | Against the real OrangeHRM demo application |
+| `npm run test:e2e:video` | The media path, under Xvfb with a window manager |
 | `npm run test:live` | Five checks against the real Gemini API. Needs a key in `.env` |
 | `npm run test:e2e:ai` | The whole chain once: capture → redaction → Gemini → rendered report |
 | `npm run test:all` | Everything above, in order |
