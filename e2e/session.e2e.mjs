@@ -221,3 +221,88 @@ test("keyboard commands are captured, Ctrl+F included", async () => {
 
   await page.close();
 });
+
+test("every direct action reaches the recording and the script", async () => {
+  // "Any press the user makes directly gets recorded in the script and the
+  // report." Right-click, middle-click, paste, drag and pointer movement were
+  // captured nowhere at all until this test existed.
+  const page = await browser.context.newPage();
+  await page.goto(`${server.url}/interactions.html`, { waitUntil: "load" });
+  await page.bringToFront();
+
+  const tabId = await browser.serviceWorker.evaluate(async () => {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    return tabs[0]?.id ?? -1;
+  });
+
+  await callExtension(extensionPage, {
+    kind: "ui/start-recording", tabId, captureMicrophone: false,
+  });
+  await waitFor("session to reach 'recording'", async () => {
+    const state = await readRecordingState(browser.serviceWorker);
+    return state?.status === "recording";
+  });
+  await page.bringToFront();
+
+  // Type, with a correction in the middle.
+  await page.click("#target");
+  await page.keyboard.type("TN-4019");
+  await page.keyboard.press("Backspace");
+  await page.keyboard.type("92");
+  await page.waitForTimeout(900);
+
+  // Right-click, middle-click.
+  await page.click("#right-me", { button: "right" });
+  await page.waitForTimeout(400);
+  await page.click("#middle-me", { button: "middle" });
+  await page.waitForTimeout(600);
+
+  // Move the pointer a long way, then drag a card.
+  await page.mouse.move(50, 50);
+  await page.mouse.move(400, 300, { steps: 12 });
+  await page.mouse.move(900, 500, { steps: 12 });
+  await page.waitForTimeout(1200);
+
+  await page.dragAndDrop("#card-1", "#to");
+  await page.waitForTimeout(900);
+
+  await callExtension(extensionPage, { kind: "ui/stop-recording" });
+  const session = await waitFor("session to finish", async () => {
+    const sessions = await readStore(extensionPage, "sessions");
+    const finished = sessions.filter((s) => s.status !== "processing"
+      && s.status !== "recording");
+    if (finished.length === 0) { return null; }
+    finished.sort((a, b) => b.startedAtMs - a.startedAtMs);
+    return finished[0];
+  }, 40000);
+
+  const events = (await readStore(extensionPage, "events"))
+    .filter((event) => event.sessionId === session.id);
+  const shape = {};
+  for (const event of events) { shape[event.type] = (shape[event.type] || 0) + 1; }
+  console.log(`  captured: ${JSON.stringify(shape)}`);
+
+  const typed = events.find((event) => event.type === "input");
+  assert.ok(typed, "the typing was not recorded at all");
+  assert.equal(typed.value, "TN-40192");
+  assert.ok(typed.keystrokes.includes("Backspace"),
+    `the individual keys were not kept: ${JSON.stringify(typed.keystrokes)}`);
+  assert.ok(typed.keystrokes.length >= 9,
+    `expected every keystroke, got ${typed.keystrokes.length}`);
+
+  assert.ok(shape["right-click"] >= 1, "the right-click was not recorded");
+  assert.ok(shape["middle-click"] >= 1, "the middle-click was not recorded");
+  assert.ok(shape["mouse-path"] >= 1, "pointer movement was not recorded");
+  assert.ok(shape["drag-drop"] >= 1, "the drag was not recorded");
+
+  const script = session.playwrightScript;
+  assert.ok(script.includes(".pressSequentially('TN-40192'"),
+    "typing must replay key by key");
+  assert.ok(script.includes("{ button: 'right' }"), "no right-click in the script");
+  assert.ok(script.includes("{ button: 'middle' }"), "no middle-click in the script");
+  assert.ok(script.includes(".dragTo("), "no drag in the script");
+  assert.ok(script.includes("points,"), "no pointer-movement evidence in the script");
+
+  console.log(`\n--- script ---\n${script}`);
+  await page.close();
+});

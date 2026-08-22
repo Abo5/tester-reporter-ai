@@ -206,6 +206,37 @@ export const ESTIMATED_TOKENS_PER_KEY_FRAME: number = 300;
  */
 export const DEFAULT_STEP_PAUSE_MS: number = 3000;
 
+/**
+ * Delay between characters when the generated script types, in milliseconds.
+ *
+ * Non-zero on purpose. The point of typing character by character rather than
+ * calling fill() is to fire the events a real keyboard fires, and an
+ * application that debounces on a 50ms window sees zero-delay typing as one
+ * paste. This is also slow enough to watch, which is the other reason the
+ * script exists.
+ */
+export const TYPING_DELAY_MS: number = 60;
+
+/** Most individual keys stored for one field. See RecordedEvent.keystrokes. */
+export const MAX_KEYSTROKES_PER_FIELD: number = 200;
+
+/**
+ * How often a mouse path is sampled, in milliseconds.
+ *
+ * A browser reports pointer movement at the display refresh rate, so recording
+ * every event would be roughly sixty entries per second of idle hand movement -
+ * hundreds of thousands in a long session, none of which anyone reads. Sampling
+ * at this interval keeps the SHAPE of the movement, which is what tells a
+ * reviewer the tester hunted around the screen before finding the control.
+ */
+export const MOUSE_PATH_SAMPLE_MS: number = 120;
+
+/** Most points kept in one mouse-path event before it is flushed. */
+export const MAX_MOUSE_PATH_POINTS: number = 40;
+
+/** A path shorter than this in pixels is hand tremor, not a movement. */
+export const MIN_MOUSE_PATH_DISTANCE_PX: number = 60;
+
 // -----------------------------------------------------------------------------
 // Storage
 // -----------------------------------------------------------------------------

@@ -54,7 +54,8 @@ export { chooseKeyFrameOffsets, isVideoMimeTypeSupported, extractBase64Payload }
 export { SYSTEM_INSTRUCTION, buildEvidenceText, buildLanguageInstruction }
   from "../src/ai/prompt";
 
-export { generatePlaywrightSpec, buildSpecFileName, describeBrowserLevelShortcut }
+export { generatePlaywrightSpec, buildSpecFileName, describeBrowserLevelShortcut,
+  describeKeystrokeCorrections, describeMousePath }
   from "../src/codegen/generate-spec";
 export { coalesceEventsForCodegen, nextEventAfter }
   from "../src/codegen/coalesce-events";

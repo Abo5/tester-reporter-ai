@@ -107,6 +107,13 @@ export type RecordedEventType =
   | "check"
   | "uncheck"
   | "press-key"
+  | "right-click"
+  | "middle-click"
+  | "paste"
+  | "copy"
+  | "cut"
+  | "drag-drop"
+  | "mouse-path"
   | "hover"
   | "scroll"
   | "tester-note"
@@ -138,6 +145,10 @@ export interface RecordedEvent {
    * For "select-option": the chosen option value.
    * For "press-key": the key name, e.g. "Enter".
    * For "scroll": "x,y" as a string.
+   * For "right-click" / "middle-click": "".
+   * For "paste" / "copy" / "cut": the clipboard text, redacted if sensitive.
+   * For "drag-drop": "fromX,fromY -> toX,toY".
+   * For "mouse-path": the sampled points as "x,y x,y x,y".
    */
   value: string;
   /** True when `value` was replaced by a redaction marker. */
@@ -148,6 +159,19 @@ export interface RecordedEvent {
   domSnapshotId: string;
   /** Id of the ElementContext captured for this event, or "" if none. */
   elementContextId: string;
+  /**
+   * For "input": the actual keys the tester pressed to produce `value`, in
+   * order, including corrections - ["A", "d", "n", "Backspace", "m", "i", "n"].
+   *
+   * WHY store this when `value` already holds the result: a field that rejects
+   * the tenth character, an autocomplete that fires on the third, a validator
+   * that runs on keyup - none of those are visible in the final value, and they
+   * are exactly the defects a tester is recording. Empty for every other event
+   * type, and redacted along with the value when the field is sensitive.
+   */
+  keystrokes: string[];
+  /** For "drag-drop": the locator of the element the drag ENDED on. */
+  dropTargetLocator: ElementLocator | null;
 }
 
 // -----------------------------------------------------------------------------
@@ -357,6 +381,17 @@ export interface RecordingSession {
   lastVideoDeliveryMode: VideoDeliveryMode;
   /** Human-readable note about any video downgrade. */
   videoDowngradeReason: string;
+  /**
+   * Set when the session ran without a host grant for the site.
+   *
+   * WHY it is stored on the session and not merely warned about in the panel:
+   * a report written from a degraded recording is a report with holes in it,
+   * and neither the model nor the person reading it can tell the difference
+   * between "the tester did nothing here" and "we could not see what the tester
+   * did here". That distinction is the whole difference between evidence and a
+   * guess, so it travels with the session.
+   */
+  interactionCaptureDegradedReason: string;
 }
 
 // -----------------------------------------------------------------------------
@@ -377,6 +412,11 @@ export interface ActionTraceStep {
   /** Where to look in the video, formatted "MM:SS". */
   videoTimestamp: string;
   videoOffsetMs: number;
+  /**
+   * The keys actually pressed to produce inputValue, corrections included.
+   * Empty for non-typing steps and for anything redacted.
+   */
+  keystrokes: string[];
 }
 
 export interface BundledDomSnapshot {

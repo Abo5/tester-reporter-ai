@@ -24,6 +24,8 @@ export interface CreateSessionInput {
   originTitle: string;
   startedAtMs: number;
   reportLanguage: ReportLanguage;
+  /** Empty unless the recording ran without a host grant. See RecordingSession. */
+  interactionCaptureDegradedReason: string;
 }
 
 /**
@@ -80,6 +82,7 @@ export async function createSession(
     redactionSummary: {},
     lastVideoDeliveryMode: "omitted",
     videoDowngradeReason: "",
+    interactionCaptureDegradedReason: input.interactionCaptureDegradedReason,
   };
 
   await putRecord<RecordingSession>(STORE_SESSIONS, session);

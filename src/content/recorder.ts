@@ -39,6 +39,14 @@ import {
   flushPendingInput,
   takeSnapshotIfSignificant,
   buildFinalSnapshot,
+  handleContextMenu,
+  handleAuxClick,
+  handleClipboardEvent,
+  handleDragStart,
+  handleDrop,
+  handleDragEnd,
+  handleMouseMove,
+  flushMousePath,
 } from "./event-handlers";
 import { resetSnapshotScheduler } from "./snapshot-scheduler";
 import { logWarning } from "../shared/logger";
@@ -287,15 +295,32 @@ function installEventListeners(): void {
   document.addEventListener("change", handleChange, true);
   document.addEventListener("keydown", handleKeyDown, true);
   document.addEventListener("mouseover", handleMouseOver, true);
+
+  // Everything else a tester does with their hands. See the block comment in
+  // event-handlers.ts: each of these is a deliberate action that produced no
+  // recorded event at all until a real session went looking for one.
+  document.addEventListener("contextmenu", handleContextMenu, true);
+  document.addEventListener("auxclick", handleAuxClick, true);
+  document.addEventListener("paste", handleClipboardEvent, true);
+  document.addEventListener("copy", handleClipboardEvent, true);
+  document.addEventListener("cut", handleClipboardEvent, true);
+  document.addEventListener("dragstart", handleDragStart, true);
+  document.addEventListener("drop", handleDrop, true);
+  document.addEventListener("dragend", handleDragEnd, true);
+  document.addEventListener("mousemove", handleMouseMove,
+    { capture: true, passive: true });
   document.addEventListener("scroll", handleScroll, { capture: true, passive: true });
 
   // Leaving a field finishes its value. Without this, clicking straight from
   // one input to a button recorded the click first and the typed value after.
   document.addEventListener("blur", flushPendingInput, true);
+  document.addEventListener("blur", flushMousePath, true);
 
   // A pending keystroke buffer must be flushed before the document goes away.
   window.addEventListener("beforeunload", flushPendingInput, true);
+  window.addEventListener("beforeunload", flushMousePath, true);
   window.addEventListener("pagehide", flushPendingInput, true);
+  window.addEventListener("pagehide", flushMousePath, true);
 
   window.addEventListener("message", handleBridgeMessage, false);
 }

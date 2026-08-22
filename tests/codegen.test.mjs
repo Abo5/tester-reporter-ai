@@ -56,6 +56,8 @@ function makeEvent(index, type, overrides = {}) {
     clientY: -1,
     domSnapshotId: "",
     elementContextId: "",
+    keystrokes: [],
+    dropTargetLocator: null,
     ...overrides,
   };
 }
@@ -742,4 +744,145 @@ test("no generated locator ever chains an absolute path under a scope", () => {
     `an absolute xpath was chained under a scope, which matches nothing:\n${spec}`);
   assert.ok(!/filter\(\{ hasText: [^)]*\}\)\.locator\('\/html/.test(spec),
     `an absolute path was chained under a scope:\n${spec}`);
+});
+
+// -----------------------------------------------------------------------------
+// Everything the tester does directly
+//
+// "Any press the user makes directly gets recorded in the script and the
+// report." Clicks and typing were there from the start; right-click,
+// middle-click, paste, drag and pointer movement were not, and none of them
+// appeared anywhere - not as a step, not as a comment, not as evidence.
+// -----------------------------------------------------------------------------
+
+/** A locator that renders to a plain page.locator(...) expression. */
+function cssLocator(selector) {
+  return {
+    strategy: "css-path",
+    primary: { strategy: "css-path", value: selector, matchCount: 1 },
+    fallbacks: [],
+    framePath: [],
+    isInShadowDom: false,
+    isClosedShadowHost: false,
+    shadowHostSelectors: [],
+    isInsideRepeatedList: false,
+    listRowRole: "",
+    listRowAnchorText: "",
+    ariaRole: "",
+    accessibleName: "",
+    visibleText: "",
+    warnings: [],
+  };
+}
+
+function specWith(...extraEvents) {
+  const base = buildWorkedExampleTrace();
+  const events = [...base];
+  for (let i = 0; i < extraEvents.length; i += 1) {
+    events.push({ ...extraEvents[i], index: base.length + i });
+  }
+  return api.generatePlaywrightSpec(SESSION, events, []);
+}
+
+test("typing replays as real key events, not as fill", () => {
+  const spec = specWith(makeEvent(0, "input", {
+    locator: cssLocator("#tenant"),
+    value: "TN-40192",
+  }));
+
+  // fill() sets the value and fires ONE input event. An autocomplete that fires
+  // on the third character, a validator that runs on keyup, a mask that rejects
+  // the tenth - none of them happen under fill(), so a spec built from fill()
+  // can pass on the very defect it was recorded to demonstrate.
+  assert.ok(spec.includes(".pressSequentially('TN-40192', { delay: 60 })"),
+    `typing must replay key by key:\n${spec}`);
+});
+
+test("a right-click replays, and says the menu is out of reach", () => {
+  const spec = specWith(makeEvent(0, "right-click", {
+    locator: cssLocator(".row"),
+  }));
+  assert.ok(spec.includes(".click({ button: 'right' })"));
+  assert.ok(spec.includes("browser chrome, not part of the page"),
+    "the context menu cannot be interacted with, and the script must say so");
+});
+
+test("a middle-click replays and warns about the new tab", () => {
+  const spec = specWith(makeEvent(0, "middle-click", {
+    locator: cssLocator("a.link"),
+  }));
+  assert.ok(spec.includes(".click({ button: 'middle' })"));
+  assert.ok(spec.includes("waitForEvent('page')"));
+});
+
+test("a paste replays as fill, deliberately, and says why", () => {
+  const spec = specWith(makeEvent(0, "paste", {
+    locator: cssLocator("#tenant"),
+    value: "TN-40192",
+  }));
+  // The opposite choice from typing, for the same reason: reproduce what the
+  // tester actually did. A paste sets the value in one step.
+  assert.ok(spec.includes(".fill('TN-40192')"));
+  assert.ok(spec.includes("PASTED this rather than typing it"));
+});
+
+test("a pasted secret never reaches the script", () => {
+  const spec = specWith(makeEvent(0, "paste", {
+    locator: cssLocator("#password"),
+    value: "[REDACTED:password]",
+    valueWasRedacted: true,
+  }));
+  assert.ok(!spec.includes("[REDACTED:password]"),
+    "the redaction marker itself should not be pasted into the script");
+  assert.ok(spec.includes("process.env.TEST_SECRET_VALUE"));
+});
+
+test("a drag replays as one dragTo", () => {
+  const spec = specWith(makeEvent(0, "drag-drop", {
+    locator: cssLocator(".card-3"),
+    dropTargetLocator: cssLocator(".column-done"),
+    value: "100,200 -> 400,220",
+  }));
+  assert.ok(spec.includes(".dragTo("), `no dragTo:\n${spec}`);
+  assert.ok(spec.includes(".column-done"));
+});
+
+test("a drag with no identifiable target says so instead of guessing", () => {
+  const spec = specWith(makeEvent(0, "drag-drop", {
+    locator: cssLocator(".card-3"),
+    dropTargetLocator: null,
+    value: "100,200 -> 400,220",
+  }));
+  assert.ok(spec.includes("could not be identified"));
+  assert.ok(!spec.includes(".dragTo("),
+    "a dragTo with an invented target is worse than an honest comment");
+});
+
+test("pointer movement is evidence, not a step", () => {
+  const spec = specWith(makeEvent(0, "mouse-path", {
+    value: "10,10 60,40 120,90 300,200",
+  }));
+  assert.ok(spec.includes("4 points"), `no path summary:\n${spec}`);
+  assert.ok(spec.includes("changes nothing on the page"),
+    "movement must not be emitted as a replayable statement");
+  assert.ok(!spec.includes("page.mouse.move"),
+    "replaying every sampled point would make the script unreadable");
+});
+
+test("the path summary reports distance, which is the part that means something", () => {
+  // A long path before a click says the tester could not find the control.
+  assert.equal(api.describeMousePath("0,0 300,400"), "2 points, 500px travelled");
+  assert.equal(api.describeMousePath("5,5"), "no movement");
+});
+
+test("corrections while typing are surfaced", () => {
+  const note = api.describeKeystrokeCorrections(
+    ["A", "d", "m", "n", "Backspace", "i", "n"]);
+  assert.match(note, /corrected themselves 1 time/);
+  assert.match(note, /Backspace/,
+    "the actual keys have to be there, or the note cannot be acted on");
+
+  assert.equal(api.describeKeystrokeCorrections(["A", "d"]), "",
+    "clean typing needs no note");
+  assert.equal(api.describeKeystrokeCorrections([]), "");
 });

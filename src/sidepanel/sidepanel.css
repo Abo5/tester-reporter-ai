@@ -294,3 +294,29 @@ label[for="note-input"] {
   padding: 2px 8px;
   font-size: 10.5px;
 }
+
+/* The grant warning. Loud on purpose: a tester who misses it loses the session. */
+.grant-card {
+  border: 1px solid var(--warning-border, #e0a83c);
+  background: var(--warning-background, #fff4e0);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.grant-title {
+  margin: 0 0 6px 0;
+  font-weight: 600;
+  color: var(--text, #1a1c20);
+}
+
+.grant-body {
+  margin: 0 0 10px 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text, #1a1c20);
+}
+
+.grant-card button {
+  width: 100%;
+}

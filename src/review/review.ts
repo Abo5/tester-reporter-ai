@@ -488,6 +488,31 @@ function renderReport(
 }
 
 /** Renders the redaction summary line, so the gate is observable. */
+/**
+ * Shows the tester, on the review page, that this recording has a hole in it.
+ *
+ * WHY it is repeated here after the side panel already warned: the side panel
+ * warning is seen before the recording, when it is still abstract. This one is
+ * seen next to the result, which is when it explains what they are looking at.
+ */
+function renderDegradationWarning(session: RecordingSession): void {
+  const box = document.getElementById("degraded-box") as HTMLElement | null;
+  if (box === null) {
+    return;
+  }
+
+  if (session.interactionCaptureDegradedReason === "") {
+    box.hidden = true;
+    return;
+  }
+
+  box.hidden = false;
+  box.textContent =
+    "This recording is incomplete. "
+    + session.interactionCaptureDegradedReason
+    + " Grant the site in Settings and record again for a full session.";
+}
+
 function renderRedactionSummary(summary: Record<string, number>): void {
   const names: string[] = Object.keys(summary);
   if (names.length === 0) {
@@ -1068,6 +1093,7 @@ async function initialiseReviewPage(): Promise<void> {
       false,
     );
     renderRedactionSummary(state.session.redactionSummary);
+    renderDegradationWarning(state.session);
     return;
   }
 

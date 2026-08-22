@@ -7911,6 +7911,67 @@ unscoped path and loses the scope honestly.
 
 ---
 
+### 19.r Every direct action, and the silence that hid the real problem
+
+The tester reported that the keyboard was not being recorded — not the special
+keys, not the letters, not the words. Reading their stored session settled it in
+one query:
+
+```
+SESSION 67521857  google.com/search?q=orang+hrm+demo   events=10
+   types  : {"click":1, "navigate":9}
+   inputs : []      keys : []
+```
+
+Nothing was granted, so the session ran on the `activeTab` fallback, and the
+journey went from Google to the application — a **cross-origin** navigation,
+which revokes `activeTab` outright. One click, nine navigations, no typing.
+
+The capture layer was not the defect. **The silence was.** The extension knew it
+had no grant, recorded a three-minute journey it could barely see, and said
+nothing until the tester read the result. That is the worst failure mode this
+product has: it does not look broken, it looks like the tester did nothing.
+
+So the fix is in three places rather than one:
+
+- The **side panel** now shows a warning for any ungranted site, before the
+  recording, with a one-click grant button. It follows the tester across tabs.
+- The **session** stores `interactionCaptureDegradedReason`, and the review page
+  shows it next to the result.
+- The **model** is told, through the same channel as truncation, that the
+  evidence has a hole in it — with an explicit instruction not to read the hole
+  as "the tester did nothing here". A confident report about an unobserved
+  journey is worse than an honest gap.
+
+Alongside it, the capture layer was completed. Everything below was a deliberate
+tester action that produced no recorded event of any kind:
+
+| Action | Recorded as | Replayed as |
+|---|---|---|
+| Individual keystrokes | `keystrokes` on the input event | `pressSequentially`, key by key |
+| Right-click | `right-click` | `.click({ button: 'right' })` |
+| Middle-click | `middle-click` | `.click({ button: 'middle' })` |
+| Paste / copy / cut | `paste` / `copy` / `cut` | `fill()` for paste, deliberately |
+| Drag and drop | `drag-drop`, both ends | `.dragTo(target)` |
+| Pointer movement | `mouse-path`, sampled | evidence only, never a statement |
+
+Two of those choices are the opposite of each other on purpose. **Typing** now
+replays with `pressSequentially` rather than `fill`, because `fill` sets the
+value and fires one event: an autocomplete that fires on the third character, a
+validator that runs on keyup, a mask that rejects the tenth — none of them
+happen under `fill`, so a spec built from it can pass on the very defect it was
+recorded to demonstrate. **Paste** replays as `fill`, for exactly the same
+reason: a paste really does arrive in one step, and a field that validates on
+keyup and not on paste behaves differently under each.
+
+Pointer movement is sampled, not recorded. A browser reports it at the display
+refresh rate; recording every event would be hundreds of thousands of entries no
+one reads, large enough to push the bundle past what can be sent. Sampling keeps
+the shape, and the shape is the part that means something — a long path before a
+click says the tester could not find the control.
+
+---
+
 ## 20. Browser verification — what running it actually proved
 
 Section 19.2 said the media path and the Chrome APIs were "still theory". They are not

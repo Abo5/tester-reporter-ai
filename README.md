@@ -192,6 +192,34 @@ warning, and forces confidence to `low`.
 
 ---
 
+## What gets recorded
+
+Every direct action, in the session and in the generated script:
+
+| You do | Recorded | The script replays it as |
+|---|---|---|
+| Click, double-click | ✅ | `.click()`, `.dblclick()` |
+| Type | ✅ every keystroke, corrections included | `.pressSequentially()` — real key events |
+| Paste, copy, cut | ✅ | `.fill()` for paste, deliberately |
+| Right-click, middle-click | ✅ | `.click({ button: … })` |
+| Enter, Tab, Escape, arrows, Home/End… | ✅ | `.press()` |
+| Any Ctrl / Alt / Meta shortcut | ✅ | `.press('Control+f')`, flagged if the browser owns it |
+| Drag and drop | ✅ both ends | `.dragTo()` |
+| Pointer movement | ✅ sampled | evidence only — it changes nothing |
+| Select, check, uncheck | ✅ | `.selectOption()`, `.check()` |
+| Scroll, state-changing hover | ✅ | comment / `.hover()` |
+
+Typing replays key by key rather than through `fill()` on purpose: `fill()` sets
+the value and fires one event, so an autocomplete that fires on the third
+character or a validator that runs on keyup never happens — and a script built
+from `fill()` can pass on the very defect it was recorded to demonstrate. Paste
+is the opposite, and replays as `fill()`, because a paste really does arrive in
+one step.
+
+Pointer movement is sampled rather than recorded raw. A browser reports it at
+the display refresh rate, which would be hundreds of thousands of entries nobody
+reads. The sample keeps the shape, which is the part that means something.
+
 ## Permissions, honestly
 
 **The install prompt asks for no site access at all.** The extension can reach
@@ -219,6 +247,11 @@ alarming. Dropping it costs status codes for navigations and for requests the
 application swallows internally. It does **not** cost response bodies — those come
 from the MAIN-world `fetch` patch. A build without it still produces good
 reports.
+
+**Grant the site before you record.** The side panel warns you when the site in
+front of you is not granted and offers a one-click grant, because without it the
+recording is close to useless: you get the video and the page addresses, and
+nothing you type or click.
 
 **Recording on a site you have not granted still works**, with two caveats.
 Press Record — use the keyboard shortcut, since `activeTab` is only granted by a

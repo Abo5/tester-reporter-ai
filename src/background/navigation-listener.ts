@@ -193,6 +193,8 @@ async function recordNavigationEvent(
     clientY: -1,
     domSnapshotId: "",
     elementContextId: "",
+    keystrokes: [],
+    dropTargetLocator: null,
   };
 
   await appendEvent(event);
@@ -338,6 +340,8 @@ async function handleTabActivated(tabId: number): Promise<void> {
     clientY: -1,
     domSnapshotId: "",
     elementContextId: "",
+    keystrokes: [],
+    dropTargetLocator: null,
   };
 
   await appendEvent(event);

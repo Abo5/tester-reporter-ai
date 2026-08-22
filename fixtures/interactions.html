@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Direct interactions</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; }
+    .board { display: flex; gap: 20px; margin-top: 20px; }
+    .column { border: 2px dashed #999; padding: 16px; min-width: 200px; min-height: 120px; }
+    .card { background: #e8eefc; padding: 10px; margin: 6px 0; cursor: grab; }
+    .row { padding: 8px; border: 1px solid #ccc; margin: 6px 0; }
+    #target { display: block; margin-top: 16px; width: 320px; padding: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Direct interactions</h1>
+
+  <label for="target">Tenant</label>
+  <input id="target" name="tenant" placeholder="type here" />
+
+  <div class="row" id="right-me">Right-click this row</div>
+  <a id="middle-me" href="/catalog.html">Middle-click this link</a>
+
+  <div class="board">
+    <div class="column" id="from"><div class="card" id="card-1" draggable="true">Card 1</div></div>
+    <div class="column" id="to">Drop here</div>
+  </div>
+
+  <script>
+    // A real drop target, so the drag actually completes.
+    const to = document.getElementById("to");
+    to.addEventListener("dragover", (e) => e.preventDefault());
+    to.addEventListener("drop", (e) => {
+      e.preventDefault();
+      to.appendChild(document.getElementById("card-1"));
+    });
+    document.getElementById("right-me").addEventListener("contextmenu", (e) => {
+      e.preventDefault();   // keep the native menu out of the automated run
+    });
+  </script>
+</body>
+</html>

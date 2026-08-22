@@ -7,6 +7,13 @@
     <link rel="stylesheet" href="review.css" />
   </head>
   <body>
+    <!--
+      Shown when the recording ran without a host grant. A report written from a
+      session that could not see the tester's clicks is a report with a hole in
+      it, and the reader has to be told which it is.
+    -->
+    <p id="degraded-box" class="error-box" hidden></p>
+
     <main class="page">
       <header class="page-header">
         <div>

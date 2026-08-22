@@ -26,6 +26,9 @@ interface PanelElements {
   countFailures: HTMLElement;
   countErrors: HTMLElement;
   errorBox: HTMLElement;
+  grantCard: HTMLElement;
+  grantBody: HTMLElement;
+  grantButton: HTMLButtonElement;
   microphoneToggle: HTMLInputElement;
   recordButton: HTMLButtonElement;
   pauseButton: HTMLButtonElement;
@@ -68,6 +71,9 @@ function collectElements(): PanelElements {
     countFailures: requireElement("count-failures"),
     countErrors: requireElement("count-errors"),
     errorBox: requireElement("error-box"),
+    grantCard: requireElement("grant-card"),
+    grantBody: requireElement("grant-body"),
+    grantButton: requireElement<HTMLButtonElement>("grant-button"),
     microphoneToggle: requireElement<HTMLInputElement>("microphone-toggle"),
     recordButton: requireElement<HTMLButtonElement>("record-button"),
     pauseButton: requireElement<HTMLButtonElement>("pause-button"),
@@ -417,7 +423,10 @@ async function initialisePanel(): Promise<void> {
   elements.microphoneToggle.checked = settings.captureMicrophone;
   elements.apiKeyWarning.hidden = settings.geminiApiKey.trim() !== "";
 
+  installGrantHandler();
+
   renderStatus("idle", 0, 0, 0, 0, "");
+  await renderGrantWarning();
   await renderSessionList();
   await renderStorageWarning();
   await sendMessageIgnoringNoReceiver({ kind: "ui/get-status" });
@@ -426,3 +435,103 @@ async function initialisePanel(): Promise<void> {
 initialisePanel().catch(function onInitError(initError: unknown): void {
   showLocalError("The panel failed to start: " + String(initError));
 });
+
+// -----------------------------------------------------------------------------
+// The grant warning
+//
+// Without a host grant the extension records the video and the page addresses
+// and NOTHING the tester types or clicks. The first version of this product
+// said nothing about that: a tester recorded a three-minute journey across
+// Google and into the application under test, and it captured one click and
+// nine navigations. They reported it as "the keyboard is not recorded".
+//
+// It was not a capture bug. It was a permission the extension never asked for
+// and never mentioned. This panel now says so before the recording, not after.
+// -----------------------------------------------------------------------------
+
+/** The origin pattern for a tab URL, or "" when the tab cannot be recorded. */
+export function originPatternForTabUrl(tabUrl: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(tabUrl);
+  } catch (parseError: unknown) {
+    return "";
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return "";
+  }
+
+  return parsed.protocol + "//" + parsed.hostname + "/*";
+}
+
+/** The site currently in front of the tester, for the grant button. */
+let pendingGrantPattern: string = "";
+
+/**
+ * Shows or hides the warning for whatever tab is in front of the tester.
+ *
+ * Runs on every status broadcast and on every tab change, because the tester
+ * can move from a granted site to an ungranted one in the middle of a session
+ * and the warning has to follow them.
+ */
+async function renderGrantWarning(): Promise<void> {
+  const tabs: chrome.tabs.Tab[] =
+    await chrome.tabs.query({ active: true, currentWindow: true });
+
+  if (tabs.length === 0 || tabs[0].url === undefined) {
+    elements.grantCard.hidden = true;
+    return;
+  }
+
+  const pattern: string = originPatternForTabUrl(tabs[0].url);
+  if (pattern === "") {
+    elements.grantCard.hidden = true;   // chrome:// and friends: nothing to grant.
+    return;
+  }
+
+  const granted: boolean = await chrome.permissions.contains({ origins: [pattern] });
+  if (granted) {
+    elements.grantCard.hidden = true;
+    return;
+  }
+
+  pendingGrantPattern = pattern;
+  elements.grantBody.textContent =
+    "Clicks and typing on " + pattern.replace("/*", "")
+    + " will not be recorded. You will get the video and the page addresses, "
+    + "and nothing else. Granting takes one click and can be undone in Settings.";
+  elements.grantCard.hidden = false;
+}
+
+/** Asks for the current site, then re-renders. */
+function installGrantHandler(): void {
+  elements.grantButton.addEventListener("click", function onGrant(): void {
+    if (pendingGrantPattern === "") {
+      return;
+    }
+    // Must be inside the click handler: chrome.permissions.request needs a
+    // user gesture, and an await before it loses the gesture.
+    chrome.permissions.request({ origins: [pendingGrantPattern] }).then(
+      function afterRequest(): void {
+        void renderGrantWarning();
+      },
+      function onRequestError(requestError: unknown): void {
+        showLocalError("Could not ask for that site: " + String(requestError));
+      },
+    );
+  });
+
+  chrome.tabs.onActivated.addListener(function onTabActivated(): void {
+    void renderGrantWarning();
+  });
+  chrome.tabs.onUpdated.addListener(function onTabUpdated(): void {
+    void renderGrantWarning();
+  });
+  chrome.permissions.onAdded.addListener(function onAdded(): void {
+    void renderGrantWarning();
+  });
+  chrome.permissions.onRemoved.addListener(function onRemoved(): void {
+    void renderGrantWarning();
+  });
+}

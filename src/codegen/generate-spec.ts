@@ -19,7 +19,7 @@ import {
 import { coalesceEventsForCodegen, nextEventAfter } from "./coalesce-events";
 import { buildFailureComment, buildClosingAssertions } from "./assertions";
 import { formatVideoTimestamp } from "../shared/time";
-import { DEFAULT_STEP_PAUSE_MS } from "../shared/constants";
+import { DEFAULT_STEP_PAUSE_MS, TYPING_DELAY_MS } from "../shared/constants";
 
 /**
  * Escapes a recorded URL for waitForURL, which treats a string as a GLOB.
@@ -112,10 +112,29 @@ function generateStatementsForEvent(
         + "sensitive. Supply it from the environment instead.");
       lines.push(
         INDENT + "await " + locatorExpression
-        + ".fill(process.env.TEST_SECRET_VALUE ?? '');");
+        + ".pressSequentially(process.env.TEST_SECRET_VALUE ?? '', "
+        + "{ delay: " + String(TYPING_DELAY_MS) + " });");
     } else {
+      // pressSequentially, not fill.
+      //
+      // fill() sets the value directly and fires ONE input event. That is fast
+      // and it is what a normal test wants - and it is exactly wrong for
+      // reproducing a bug. A field that validates on keyup, an autocomplete
+      // that fires on the third character, a mask that rejects the tenth, a
+      // debounce that only misbehaves while the tester is still typing: none of
+      // those happen under fill(), so a spec built from fill() can pass on the
+      // very defect it was recorded to demonstrate.
+      //
+      // pressSequentially sends real key events, one per character, which is
+      // what the tester did.
       lines.push(
-        INDENT + "await " + locatorExpression + ".fill(" + quote(event.value) + ");");
+        INDENT + "await " + locatorExpression + ".pressSequentially("
+        + quote(event.value) + ", { delay: " + String(TYPING_DELAY_MS) + " });");
+
+      const keystrokeNote: string = describeKeystrokeCorrections(event.keystrokes);
+      if (keystrokeNote !== "") {
+        lines.push(INDENT + "// " + keystrokeNote);
+      }
     }
   } else if (event.type === "select-option") {
     lines.push(
@@ -136,6 +155,64 @@ function generateStatementsForEvent(
       lines.push(
         INDENT + "await " + locatorExpression + ".press(" + quote(event.value) + ");");
     }
+  } else if (event.type === "right-click") {
+    lines.push(
+      INDENT + "await " + locatorExpression + ".click({ button: 'right' });");
+    lines.push(
+      INDENT + "// The context menu this opens is browser chrome, not part of "
+      + "the page, so nothing after this line can interact with it.");
+  } else if (event.type === "middle-click") {
+    lines.push(
+      INDENT + "await " + locatorExpression + ".click({ button: 'middle' });");
+    lines.push(
+      INDENT + "// A middle-click on a link opens a new tab. Playwright will "
+      + "not follow it; add a context.waitForEvent('page') if the journey "
+      + "continues there.");
+  } else if (event.type === "paste") {
+    if (event.valueWasRedacted) {
+      lines.push(
+        INDENT + "// The tester pasted a value that looked sensitive. Supply it "
+        + "from the environment.");
+      lines.push(
+        INDENT + "await " + locatorExpression
+        + ".fill(process.env.TEST_SECRET_VALUE ?? '');");
+    } else {
+      lines.push(
+        INDENT + "// The tester PASTED this rather than typing it. fill() is "
+        + "the closest replay: it sets the value in one step, the way a paste "
+        + "does, which is the point - a field that validates on keyup and not "
+        + "on paste behaves differently here than under pressSequentially.");
+      lines.push(
+        INDENT + "await " + locatorExpression + ".fill(" + quote(event.value) + ");");
+    }
+  } else if (event.type === "copy" || event.type === "cut") {
+    lines.push(
+      INDENT + "// The tester " + event.type + "-ed here. The clipboard is not "
+      + "part of the page and Playwright does not replay it; this line records "
+      + "what happened.");
+    lines.push(
+      INDENT + "await " + locatorExpression + ".press("
+      + quote(event.type === "copy" ? "Control+c" : "Control+x") + ");");
+  } else if (event.type === "drag-drop") {
+    const dropExpression: string =
+      event.dropTargetLocator === null
+        ? ""
+        : locatorToPlaywrightExpression(event.dropTargetLocator);
+    if (dropExpression === "") {
+      lines.push(
+        INDENT + "// The tester dragged from here to " + event.value + ", but "
+        + "the element they dropped onto could not be identified. Add the "
+        + "target by hand.");
+    } else {
+      lines.push(
+        INDENT + "await " + locatorExpression + ".dragTo(" + dropExpression + ");");
+    }
+  } else if (event.type === "mouse-path") {
+    lines.push(
+      INDENT + "// The tester moved the pointer here (" + describeMousePath(event.value)
+      + "). Movement is recorded as evidence for the report - it shows where "
+      + "they looked - but it changes nothing on the page, so there is no "
+      + "statement to replay.");
   } else if (event.type === "hover") {
     lines.push(INDENT + "await " + locatorExpression + ".hover();");
   } else if (event.type === "scroll") {
@@ -199,6 +276,72 @@ function buildHeaderLines(
   return lines;
 }
 
+
+
+/**
+ * A short note when the tester corrected themselves while typing, or "".
+ *
+ * WHY this is in the script and not only the report: a field whose final value
+ * is right but which was typed, deleted and retyped is often a field that
+ * rejected something. The reader of the spec should know that the clean
+ * pressSequentially line above is a simplification of what happened.
+ */
+export function describeKeystrokeCorrections(keystrokes: string[]): string {
+  if (keystrokes.length === 0) {
+    return "";
+  }
+
+  let corrections: number = 0;
+  for (let index = 0; index < keystrokes.length; index = index + 1) {
+    if (keystrokes[index] === "Backspace" || keystrokes[index] === "Delete") {
+      corrections = corrections + 1;
+    }
+  }
+
+  if (corrections === 0) {
+    return "";
+  }
+
+  return "The tester corrected themselves " + String(corrections)
+    + " time(s) while typing this. The line above types the final value in one "
+    + "go; if the defect involves what the field did DURING typing, replay the "
+    + "recorded keys instead: " + keystrokes.join(" ");
+}
+
+/**
+ * Turns a sampled mouse path into a sentence.
+ *
+ * WHAT: "8 points, 640px travelled". WHY not the raw points: forty coordinate
+ * pairs in a comment is something a reader skips, and the number that carries
+ * meaning is how far the pointer went - a long path before a click says the
+ * tester could not find the control.
+ */
+export function describeMousePath(pathValue: string): string {
+  const parts: string[] = pathValue.split(" ");
+  if (parts.length < 2) {
+    return "no movement";
+  }
+
+  let travelled: number = 0;
+  let previousX: number = 0;
+  let previousY: number = 0;
+
+  for (let index = 0; index < parts.length; index = index + 1) {
+    const pair: string[] = parts[index].split(",");
+    const x: number = Number(pair[0]);
+    const y: number = Number(pair[1]);
+    if (index > 0) {
+      const deltaX: number = x - previousX;
+      const deltaY: number = y - previousY;
+      travelled = travelled + Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+    }
+    previousX = x;
+    previousY = y;
+  }
+
+  return String(parts.length) + " points, " + String(Math.round(travelled))
+    + "px travelled";
+}
 
 /**
  * The lines that let a person WATCH the replay.

@@ -27,6 +27,24 @@
 
     <p id="error-box" class="error-box" hidden></p>
 
+    <!--
+      The grant warning. This is the single most important thing this panel
+      says. Without a grant the extension records the video and the navigations
+      and NOTHING the tester types or clicks, and the first version of this
+      product said nothing at all about it - a tester recorded a three-minute
+      journey and found out at the end that it had captured almost none of it.
+    -->
+    <section id="grant-card" class="grant-card" hidden>
+      <p class="grant-title">This site is not granted</p>
+      <p class="grant-body" id="grant-body">
+        Clicks and typing will not be recorded here. You will get the video and
+        the page addresses, and nothing else.
+      </p>
+      <button id="grant-button" class="primary" type="button">
+        Grant this site
+      </button>
+    </section>
+
     <section class="card">
       <label class="checkbox-row">
         <input type="checkbox" id="microphone-toggle" />

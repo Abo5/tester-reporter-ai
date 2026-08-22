@@ -28,6 +28,10 @@ import {
   HOVER_MUTATION_WINDOW_MS,
   HOVER_THROTTLE_MS,
   SCROLL_RELEVANCE_WINDOW_MS,
+  MAX_KEYSTROKES_PER_FIELD,
+  MOUSE_PATH_SAMPLE_MS,
+  MAX_MOUSE_PATH_POINTS,
+  MIN_MOUSE_PATH_DISTANCE_PX,
 } from "../shared/constants";
 
 // -----------------------------------------------------------------------------
@@ -52,6 +56,12 @@ interface PendingInput {
   locator: ElementLocator | null;
   elementContextId: string;
   isSensitive: boolean;
+  /**
+   * Every key the tester pressed into this field, in order, corrections
+   * included. See RecordedEvent.keystrokes for why the final value is not
+   * enough.
+   */
+  keystrokes: string[];
 }
 let pendingInput: PendingInput | null = null;
 
@@ -141,6 +151,8 @@ function createBaseEvent(type: RecordedEventType): RecordedEvent {
     clientY: -1,
     domSnapshotId: "",
     elementContextId: "",
+    keystrokes: [],
+    dropTargetLocator: null,
   };
 }
 
@@ -355,9 +367,14 @@ export function flushPendingInput(): void {
   if (buffered.isSensitive) {
     event.value = "[REDACTED:password]";
     event.valueWasRedacted = true;
+    // The keystrokes ARE the secret, one character at a time. Redacting the
+    // value and shipping the keys that spell it would be worse than not
+    // redacting at all, because it would look safe.
+    event.keystrokes = [];
   } else {
     event.value = buffered.latestValue;
     event.valueWasRedacted = false;
+    event.keystrokes = buffered.keystrokes;
   }
 
   sendEvent(event);
@@ -401,6 +418,7 @@ export function handleInput(nativeEvent: Event): void {
       locator: safeGetElementSelector(target),
       elementContextId: captureAndSendElementContext(target),
       isSensitive: isSensitiveField(target),
+      keystrokes: [],
     };
   } else {
     pendingInput.latestValue = currentValue;
@@ -730,6 +748,29 @@ export function describeKeyPress(nativeEvent: KeyboardEvent): string {
   return parts.join("+");
 }
 
+
+/**
+ * Adds one key to the buffer for the field currently being typed into.
+ *
+ * WHY it is capped: a tester who leans on a key, or pastes into a field that
+ * then fires synthetic key events, could otherwise put tens of thousands of
+ * entries into one event. Two hundred is far more than any real field needs and
+ * small enough that it can never be the reason a session is too large to send.
+ */
+function rememberKeystroke(nativeEvent: KeyboardEvent, target: Element | null): void {
+  if (pendingInput === null) {
+    return;
+  }
+  if (target !== pendingInput.element) {
+    return;
+  }
+  if (pendingInput.keystrokes.length >= MAX_KEYSTROKES_PER_FIELD) {
+    return;
+  }
+
+  pendingInput.keystrokes.push(describeKeyPress(nativeEvent));
+}
+
 /**
  * Records the key presses that carry information no other event does.
  *
@@ -746,6 +787,13 @@ export function handleKeyDown(nativeEvent: KeyboardEvent): void {
   const target: Element | null = getRealEventTarget(nativeEvent);
   const isCommand: boolean = isCommandKeyPress(nativeEvent);
   const isStandaloneKey: boolean = RECORDED_KEYS.includes(nativeEvent.key);
+
+  // Record the keystroke against the field being typed into, whatever else
+  // happens below. This is what lets the report say "the tester typed Admn,
+  // backspaced and typed in" rather than only "the field ended up as Admin" -
+  // and a validator that fires on the seventh character is invisible in the
+  // second version.
+  rememberKeystroke(nativeEvent, target);
 
   if (!isCommand && !isStandaloneKey) {
     return;
@@ -965,4 +1013,251 @@ export function handleUrlChange(pageUrl: string, pageTitle: string): void {
   event.pageTitle = pageTitle;
   event.domSnapshotId = takeSnapshotIfSignificant("url-change", -1);
   sendEvent(event);
+}
+
+// -----------------------------------------------------------------------------
+// The rest of what a tester does directly
+//
+// Clicks, typing and the standalone keys were recorded from the start. These
+// are the actions that were not, and every one of them is a thing a tester does
+// deliberately: right-click a row to open its menu, paste a value they copied
+// from a ticket, drag a card into another column, or hunt around the screen
+// looking for a control that should have been obvious.
+// -----------------------------------------------------------------------------
+
+/** Records a right-click. The menu that opens is browser chrome, not the page. */
+export function handleContextMenu(nativeEvent: MouseEvent): void {
+  if (!isRecordingActive) {
+    return;
+  }
+
+  flushPendingInput();
+
+  const target: Element | null = getRealEventTarget(nativeEvent);
+  const event: RecordedEvent = createBaseEvent("right-click");
+  event.clientX = nativeEvent.clientX;
+  event.clientY = nativeEvent.clientY;
+  if (target !== null) {
+    event.locator = safeGetElementSelector(target);
+    event.elementContextId = captureAndSendElementContext(target);
+  }
+
+  sendEvent(event);
+}
+
+/**
+ * Records a middle-click.
+ *
+ * WHY separately from click: a middle-click on a link opens it in a new tab,
+ * which is a completely different journey from a left-click, and the click
+ * handler never sees it - "click" only fires for the primary button.
+ */
+export function handleAuxClick(nativeEvent: MouseEvent): void {
+  if (!isRecordingActive) {
+    return;
+  }
+  if (nativeEvent.button !== 1) {
+    return;   // Button 2 arrives as contextmenu, handled above.
+  }
+
+  flushPendingInput();
+
+  const target: Element | null = getRealEventTarget(nativeEvent);
+  const event: RecordedEvent = createBaseEvent("middle-click");
+  event.clientX = nativeEvent.clientX;
+  event.clientY = nativeEvent.clientY;
+  if (target !== null) {
+    event.locator = safeGetElementSelector(target);
+    event.elementContextId = captureAndSendElementContext(target);
+  }
+
+  sendEvent(event);
+}
+
+/**
+ * Records paste, copy and cut.
+ *
+ * WHY this is worth its own event: a pasted value does not necessarily produce
+ * the keystrokes or even the input event a typed one does, so a bug that only
+ * happens on paste - a field that trims on keyup but not on paste, a validator
+ * that never runs - would appear in the recording as a value that arrived from
+ * nowhere.
+ *
+ * The pasted text goes through the same sensitivity check as typing. A password
+ * manager pastes into a password field, and that value must not reach disk.
+ */
+export function handleClipboardEvent(nativeEvent: ClipboardEvent): void {
+  if (!isRecordingActive) {
+    return;
+  }
+
+  const target: Element | null = getRealEventTarget(nativeEvent);
+
+  let type: RecordedEventType;
+  if (nativeEvent.type === "paste") {
+    type = "paste";
+  } else if (nativeEvent.type === "copy") {
+    type = "copy";
+  } else {
+    type = "cut";
+  }
+
+  const event: RecordedEvent = createBaseEvent(type);
+
+  let text: string = "";
+  if (nativeEvent.clipboardData !== null) {
+    text = nativeEvent.clipboardData.getData("text");
+  }
+
+  if (target !== null && isSensitiveField(target)) {
+    event.value = "[REDACTED:password]";
+    event.valueWasRedacted = true;
+  } else {
+    event.value = text.slice(0, 2000);
+    event.valueWasRedacted = false;
+  }
+
+  if (target !== null) {
+    event.locator = safeGetElementSelector(target);
+  }
+
+  sendEvent(event);
+}
+
+/** Where the current drag started, or null when nothing is being dragged. */
+let dragStart: { x: number; y: number; locator: ElementLocator | null } | null = null;
+
+/** Remembers where a drag began, so the drop can be recorded as one action. */
+export function handleDragStart(nativeEvent: DragEvent): void {
+  if (!isRecordingActive) {
+    return;
+  }
+
+  const target: Element | null = getRealEventTarget(nativeEvent);
+  dragStart = {
+    x: nativeEvent.clientX,
+    y: nativeEvent.clientY,
+    locator: target === null ? null : safeGetElementSelector(target),
+  };
+}
+
+/**
+ * Records a completed drag as ONE event with both ends.
+ *
+ * WHY one event rather than a dragstart and a drop: a drag is a single thing
+ * the tester did, and Playwright replays it as a single dragTo() call. Two
+ * events would have to be re-paired by whoever reads them, and a pairing that
+ * can be got wrong is a pairing that eventually is.
+ */
+export function handleDrop(nativeEvent: DragEvent): void {
+  if (!isRecordingActive) {
+    return;
+  }
+  if (dragStart === null) {
+    return;
+  }
+
+  const target: Element | null = getRealEventTarget(nativeEvent);
+  const event: RecordedEvent = createBaseEvent("drag-drop");
+  event.locator = dragStart.locator;
+  event.dropTargetLocator = target === null ? null : safeGetElementSelector(target);
+  event.clientX = nativeEvent.clientX;
+  event.clientY = nativeEvent.clientY;
+  event.value = String(dragStart.x) + "," + String(dragStart.y)
+    + " -> " + String(nativeEvent.clientX) + "," + String(nativeEvent.clientY);
+
+  dragStart = null;
+  sendEvent(event);
+}
+
+/** Clears the drag state when a drag ends without a drop. */
+export function handleDragEnd(): void {
+  dragStart = null;
+}
+
+// --- The mouse path ----------------------------------------------------------
+
+/** Points sampled since the last flush. */
+let mousePathPoints: { x: number; y: number }[] = [];
+
+/** Wall-clock time of the last point taken. */
+let lastMouseSampleMs: number = 0;
+
+/** Timer that flushes the path once the hand stops moving. */
+let mousePathFlushTimerId: number = 0;
+
+/**
+ * Samples pointer movement instead of recording it.
+ *
+ * A browser reports movement at the display refresh rate. Recording every event
+ * would be roughly sixty entries per second of idle hand movement - hundreds of
+ * thousands in a real session, none of which anyone would ever read, and enough
+ * to push the evidence bundle past what can be sent at all. Sampling keeps the
+ * SHAPE, which is the part that carries meaning: a reviewer can see that the
+ * tester swept across the screen twice before finding the control, which is
+ * itself a usability finding.
+ *
+ * Short paths are dropped entirely. A few pixels of tremor while reading is not
+ * a movement anyone needs recorded.
+ */
+export function handleMouseMove(nativeEvent: MouseEvent): void {
+  if (!isRecordingActive) {
+    return;
+  }
+
+  const now: number = Date.now();
+  if (now - lastMouseSampleMs < MOUSE_PATH_SAMPLE_MS) {
+    return;
+  }
+  lastMouseSampleMs = now;
+
+  mousePathPoints.push({ x: nativeEvent.clientX, y: nativeEvent.clientY });
+
+  if (mousePathPoints.length >= MAX_MOUSE_PATH_POINTS) {
+    flushMousePath();
+    return;
+  }
+
+  window.clearTimeout(mousePathFlushTimerId);
+  mousePathFlushTimerId = window.setTimeout(flushMousePath, 700);
+}
+
+/** Emits the sampled path as one event, if it went anywhere worth recording. */
+export function flushMousePath(): void {
+  window.clearTimeout(mousePathFlushTimerId);
+
+  const points: { x: number; y: number }[] = mousePathPoints;
+  mousePathPoints = [];
+
+  if (points.length < 2) {
+    return;
+  }
+  if (totalPathDistance(points) < MIN_MOUSE_PATH_DISTANCE_PX) {
+    return;
+  }
+
+  const parts: string[] = [];
+  for (let index = 0; index < points.length; index = index + 1) {
+    parts.push(String(points[index].x) + "," + String(points[index].y));
+  }
+
+  const event: RecordedEvent = createBaseEvent("mouse-path");
+  event.value = parts.join(" ");
+  event.clientX = points[points.length - 1].x;
+  event.clientY = points[points.length - 1].y;
+
+  sendEvent(event);
+}
+
+/** Straight-line distance walked along a path, in pixels. */
+export function totalPathDistance(points: { x: number; y: number }[]): number {
+  let total: number = 0;
+
+  for (let index = 1; index < points.length; index = index + 1) {
+    const deltaX: number = points[index].x - points[index - 1].x;
+    const deltaY: number = points[index].y - points[index - 1].y;
+    total = total + Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+  }
+
+  return total;
 }

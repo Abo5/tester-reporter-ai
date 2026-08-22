@@ -349,9 +349,22 @@ async function handleStartRecording(
   // fetch patch lands late, so requests the page made before Record was
   // pressed are not seen. Granting the origin removes that gap.
   const originGranted: boolean = await isTabOriginGranted(tab.url ?? "");
+  let degradedReason: string = "";
   if (!originGranted) {
     logInfo("worker", "Origin not granted; injecting under activeTab instead.");
-    await injectIntoTabForThisSession(tabId);
+    const injected: boolean = await injectIntoTabForThisSession(tabId);
+    if (injected) {
+      degradedReason =
+        "This site was not granted, so recording used the one-tab activeTab "
+        + "permission. Requests the page made before Record was pressed were "
+        + "not seen, and if the journey leaves this site Chrome revokes the "
+        + "permission and interactions stop being captured entirely.";
+    } else {
+      degradedReason =
+        "This site was not granted and the extension could not inject into the "
+        + "tab, so NO clicks, typing or key presses were captured. The video "
+        + "and the page addresses are all that this session contains.";
+    }
   }
 
   const sessionId: string = createId();
@@ -365,6 +378,7 @@ async function handleStartRecording(
     originTitle: tab.title ?? "",
     startedAtMs: startedAtMs,
     reportLanguage: settings.reportLanguage,
+      interactionCaptureDegradedReason: degradedReason,
   });
 
   const state: ActiveRecordingState = {
@@ -1011,6 +1025,8 @@ async function handleTesterNote(text: string): Promise<void> {
     clientY: -1,
     domSnapshotId: "",
     elementContextId: "",
+    keystrokes: [],
+    dropTargetLocator: null,
   });
   state.eventCount = state.eventCount + 1;
   await writeActiveState(state);

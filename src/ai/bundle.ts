@@ -83,6 +83,7 @@ function buildActionTrace(events: RecordedEvent[]): ActionTraceStep[] {
       wallClockMs: event.wallClockMs,
       videoTimestamp: formatVideoTimestamp(event.videoOffsetMs),
       videoOffsetMs: event.videoOffsetMs,
+      keystrokes: event.keystrokes,
     });
   }
   return steps;
@@ -403,6 +404,20 @@ export async function buildEvidenceBundle(
   input: BuildBundleInput,
 ): Promise<AIEvidenceBundle> {
   const truncationNotes: string[] = [];
+
+  // A degraded recording goes into the SAME channel as truncation, because it
+  // is the same kind of fact: the evidence has a hole in it and the model must
+  // not read the hole as "the tester did nothing here". Without this, a session
+  // that captured only navigations produces a confident report about a journey
+  // nobody actually observed.
+  if (input.session.interactionCaptureDegradedReason !== "") {
+    truncationNotes.push(
+      "INTERACTION CAPTURE WAS DEGRADED. "
+      + input.session.interactionCaptureDegradedReason
+      + " Do not infer that the tester performed no actions where none are "
+      + "recorded - the recording could not see them. Say so in the report "
+      + "rather than describing a journey that was not observed.");
+  }
 
   // --- Failures first: they drive every selection decision below. -----------
   const networkFailures: NetworkEntry[] = [];
