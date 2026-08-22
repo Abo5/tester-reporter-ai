@@ -46,17 +46,17 @@ been run, and they are settled.
 | V2 | `generateContent` endpoint path and request body shape | Gemini API reference | ✅ **CONFIRMED** by live test |
 | V3 | Exact parameter names for structured JSON output (`responseMimeType` + `responseSchema` under `generationConfig`) | Gemini API structured-output docs | ✅ **CONFIRMED** by live test |
 | V4 | Parameter name for thinking / reasoning level, and whether this model has one | Gemini API docs | ⬜ still open |
-| V5 | Supported video MIME types (is `video/webm` accepted?) and max duration | Gemini API video docs | ⬜ still open |
-| V6 | Inline base64 size threshold vs. Files API — and the Files API upload flow and retention window | Gemini API files docs | ⬜ still open |
+| V5 | Supported video MIME types (is `video/webm` accepted?) and max duration | Gemini API video docs | ⬜ still open — no video was captured under test |
+| V6 | Inline base64 size threshold vs. Files API — and the Files API upload flow and retention window | Gemini API files docs | ⬜ still open — the Files API upload path is still unexercised |
 | V7 | Current price per 1M input tokens, per 1M output tokens, and how video seconds are tokenised | Gemini API pricing page | ⬜ still open |
-| V8 | `chrome.offscreen` reason enum values (`USER_MEDIA`, `DISPLAY_MEDIA`, `BLOBS`, …) | Chrome offscreen API docs | ⬜ browser, still open |
-| V9 | `chrome.tabCapture.getMediaStreamId()` signature + the `getUserMedia` constraint shape used to consume the stream ID | Chrome tabCapture docs + offscreen recording sample | ⬜ browser, still open |
-| V10 | Whether a microphone permission prompt can be raised from an offscreen document, or must be pre-granted from a normal extension page | Chrome offscreen / permissions docs | ⬜ browser, still open |
-| V11 | MV3 service-worker idle-termination semantics as of the Chrome version you target | Chrome service worker lifecycle docs | ⬜ browser, still open |
-| V12 | `MediaRecorder.isTypeSupported('video/mp4;codecs=avc1…')` in your target Chrome | Test in the browser, not the docs | ⬜ browser, still open |
-| V13 | `content_scripts[].world: "MAIN"` minimum Chrome version | Chrome content scripts docs | ⬜ browser, still open |
-| V14 | Whether `chrome.webRequest` (non-blocking) still reports `statusCode` in `onCompleted`/`onErrorOccurred` in MV3 with only host permissions | Chrome webRequest docs | ⬜ browser, still open |
-| V15 | Whether `fetch()` to `generativelanguage.googleapis.com` from an MV3 service worker needs the host in `host_permissions` (I assume yes) | Chrome CORS-for-extensions docs | ⬜ browser, still open |
+| V8 | `chrome.offscreen` reason enum values (`USER_MEDIA`, `DISPLAY_MEDIA`, `BLOBS`, …) | Chrome offscreen API docs | ✅ **CONFIRMED** — offscreen document created successfully under test |
+| V9 | `chrome.tabCapture.getMediaStreamId()` signature + the `getUserMedia` constraint shape used to consume the stream ID | Chrome tabCapture docs + offscreen recording sample | ✅ **ANSWERED** — getMediaStreamId REQUIRES prior invocation (activeTab); host permissions do not satisfy it |
+| V10 | Whether a microphone permission prompt can be raised from an offscreen document, or must be pre-granted from a normal extension page | Chrome offscreen / permissions docs | ⬜ still open — microphone from an offscreen document was not exercised |
+| V11 | MV3 service-worker idle-termination semantics as of the Chrome version you target | Chrome service worker lifecycle docs | ✅ **EXERCISED** — worker survives a full session; state in storage.session works |
+| V12 | `MediaRecorder.isTypeSupported('video/mp4;codecs=avc1…')` in your target Chrome | Test in the browser, not the docs | ⬜ still open — MediaRecorder MP4 support was not exercised |
+| V13 | `content_scripts[].world: "MAIN"` minimum Chrome version | Chrome content scripts docs | ✅ **CONFIRMED** — world: MAIN content script runs at document_start |
+| V14 | Whether `chrome.webRequest` (non-blocking) still reports `statusCode` in `onCompleted`/`onErrorOccurred` in MV3 with only host permissions | Chrome webRequest docs | ✅ **CONFIRMED** — webRequest reports statusCode 500 under MV3 with host permissions |
+| V15 | Whether `fetch()` to `generativelanguage.googleapis.com` from an MV3 service worker needs the host in `host_permissions` (I assume yes) | Chrome CORS-for-extensions docs | ✅ **CONFIRMED** — fetch to generativelanguage.googleapis.com works from the extension |
 
 ---
 
@@ -7789,3 +7789,85 @@ path never reads request headers at all, so a list of which ones would be
 allowed described behaviour that does not exist) and five unused helpers. Unused
 code in a security-sensitive extension is code nobody has reviewed and nobody
 has tested.
+
+---
+
+## 20. Browser verification — what running it actually proved
+
+Section 19.2 said the media path and the Chrome APIs were "still theory". They are not
+any more. Chromium is available on the development machine, so the extension now runs
+under test in a real browser: `npm run test:e2e` launches Chromium with `dist/` loaded,
+drives a recording session through the same message surface the side panel uses, and reads
+the results straight out of IndexedDB.
+
+Running it found **eleven defects that 93 offline tests could not**, several of which
+would have made the product look broken on first use.
+
+### 20.1 The defects real-browser testing found
+
+| # | Defect | Why offline tests could not see it |
+|---|---|---|
+| A | **A failed tab capture aborted the entire session.** Chrome refuses `tabCapture` unless the extension has been *invoked* on the tab; host permissions do not satisfy it. The tester got no events, no page code and no script. | The invariant was enforced for the AI step and not one level above it. Nothing in a unit test calls `chrome.tabCapture`. |
+| B | **The side panel swallowed the click that grants the invocation.** `setPanelBehavior({ openPanelOnActionClick: true })` makes Chrome open the panel and never fire `action.onClicked`, so the extension was never recorded as invoked — guaranteeing A on every run. | Requires a real toolbar and a real click. |
+| C | **The hover heuristic fired on any page mutation.** Six spurious hovers in one short session, because a status line updating counted as "this hover changed something". | The plan described the correct rule; the code watched the whole document. Only a real page with real async rendering shows the difference. |
+| D | **A false "positional locator" warning on elements with a unique test id**, because a four-tab tablist trips the repeated-list heuristic. | The unit test asserted the warning appears; nothing asserted it *stays away*. |
+| E | **A network failure was blamed on every step within three seconds** — four suspects instead of one. | Needs real timing between real events. |
+| F | **Pressing Enter in a form made Chrome dispatch a synthetic click on the submit button**, so the generated spec submitted twice. | Purely a browser behaviour. No amount of reading the code reveals it. |
+| G | **Checkboxes were recorded as typing.** They fire `input` events, so the coalescer swallowed them and codegen emitted `.fill('on')`, which Playwright rejects outright. | Found only by *running* a generated spec. "input value=on" looks perfectly reasonable in a trace. |
+| H | **Codegen ran only in the review page**, so the product's central artifact did not exist until someone happened to open it. | The unit tests call the generator directly, so it always had a script. |
+| I | **Secrets written as labelled page text were not redacted.** Found on the real OrangeHRM login page, which prints `Password : admin123` as ordinary content — exactly how staging environments advertise test credentials. | A fixture written by the same person who wrote the redactor would never have contained it. |
+| J | **A lost-update race silently dropped recorded steps.** `handleRecordedEvent` read `eventCount`, awaited a write, then incremented. Two events in the same tick claimed the same index, and because the store is keyed `[sessionId, index]` the second overwrote the first. **"Type a value, press Enter" produces exactly that pair** — the most common thing a tester does. | Requires genuinely concurrent message delivery. |
+| K | **A click-caused navigation emitted both `waitForURL` and `goto` for the same URL**, so replay did a full page load and discarded the session the click had just established. | Visible only in a generated spec from a real login flow. |
+
+**J is the one worth dwelling on.** It lost data, silently, on the most ordinary
+interaction there is, and it had been in the code since the first commit. Nothing in the
+93 offline tests could have caught it, because the failure needs two messages arriving in
+the same tick.
+
+### 20.2 The test suite now
+
+| Command | What it proves | Needs |
+|---|---|---|
+| `npm test` | 93 offline unit tests: pruning policy, selector chain, redaction gate, codegen, validation, budgets | nothing |
+| `npm run test:e2e` | 11 tests in a real Chromium: extension loads, content scripts inject, a full session captures, the **five seeded defects** are all found, and a generated spec **actually replays** in English and Arabic | Chromium |
+| `npm run test:e2e:site` | The real OrangeHRM demo: a real React SPA with generated class names and a real login form | Chromium + network |
+| `npm run test:live` | Five checks against the real Gemini API | a key in `.env` |
+| `npm run test:e2e:ai` | **The whole chain once**: real capture → real redaction → real Gemini → rendered report | Chromium + key |
+| `npm run test:all` | All of the above | everything |
+
+### 20.3 The graded bench
+
+`fixtures/bench.html` (published as an artifact) is a working page with **five documented
+defects**, so a capture run can be *scored* rather than admired. Two of the five are
+invisible on screen and exist only in the markup — the argument for capturing page code
+rather than screenshots, made concrete.
+
+The extension finds all five. Run through the full pipeline, the model reported the
+blocker as the primary defect and listed the other four in `secondaryIssues`, with an
+empty `unverifiedClaims`.
+
+### 20.4 What running it against OrangeHRM showed
+
+A real React application with `oxd-` class names that change on every build:
+
+- **All four locators resolved to `role` + accessible name.** Zero xpath fallbacks. The
+  "never use a class name" rule is not a theory; it is the reason this worked.
+- The password was replaced with `[REDACTED:password]` **at capture time**, before
+  touching disk.
+- The username was *not* redacted — over-redaction would make the report useless, and that
+  is asserted too.
+- The largest pruned snapshot was **18,817 characters** against a 40,000 budget, on a real
+  enterprise page.
+
+### 20.5 What is still unproven
+
+Honestly, and it is a short list:
+
+- **The video path end to end.** `tabCapture` needs a real toolbar click, which a test
+  harness cannot synthesise, so no session under test ever produced a video. That means
+  the Files API upload, the accepted video MIME types, MP4 recording support and the
+  microphone-from-offscreen question (V5, V6, V10, V12) are all still open. Everything
+  *around* the video is proven: the failure degrades correctly, the report is produced
+  without it, and `evidenceUsed.video` comes back `false`.
+- **Pricing (V7)**, which is a documentation lookup, not a test.
+- **The thinking/reasoning parameter (V4)**, if this model has one.

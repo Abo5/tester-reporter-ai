@@ -397,3 +397,46 @@ test("a slow click then double-click on the same element is NOT merged", () => {
   assert.equal(kept.length, 2,
     "four seconds apart is two deliberate interactions, not one double-click");
 });
+
+// --- Navigation caused by a click -------------------------------------------
+
+test("a click-caused navigation does not also emit a redundant goto", () => {
+  // Seen in a real OrangeHRM login spec: waitForURL followed immediately by
+  // goto for the SAME url. Replaying that reloads the page and throws away the
+  // session the login just established, so the second statement is not merely
+  // redundant - it changes what the test does.
+  const locator = makeLocator({
+    primary: {
+      strategy: "role-and-name", value: "Login", role: "button",
+      matchCount: 1, isUniqueAtCaptureTime: true,
+    },
+    accessibleName: "Login",
+  });
+
+  const dashboard = "https://example.test/web/index.php/dashboard/index";
+  const events = [
+    makeEvent(1, "click", { wallClockMs: 2000, locator }),
+    makeEvent(2, "navigate", { wallClockMs: 2600, pageUrl: dashboard }),
+  ];
+
+  const spec = api.generatePlaywrightSpec(SESSION, events, []);
+
+  const waits = (spec.match(/waitForURL\(/g) ?? []).length;
+  const gotosToDashboard = (spec.match(/goto\('https:\/\/example\.test\/web/g) ?? []).length;
+
+  assert.equal(waits, 1, "expected exactly one waitForURL");
+  assert.equal(gotosToDashboard, 0,
+    "a goto to the URL we just waited for would reload the page and discard "
+      + "the state the click established");
+});
+
+test("an unrelated later navigation still emits a goto", () => {
+  const events = [
+    makeEvent(1, "click", { wallClockMs: 1000, locator: makeLocator() }),
+    makeEvent(2, "navigate", { wallClockMs: 9000, pageUrl: "https://example.test/other" }),
+  ];
+
+  const spec = api.generatePlaywrightSpec(SESSION, events, []);
+  assert.ok(spec.includes("await page.goto('https://example.test/other');"),
+    "a navigation the click did not cause must still be replayed");
+});

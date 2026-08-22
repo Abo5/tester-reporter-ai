@@ -35,6 +35,7 @@ function generateStatementsForEvent(
   stepNumber: number,
   networkEntries: NetworkEntry[],
   allEvents: RecordedEvent[],
+  alreadyAwaitedUrl: string,
 ): string[] {
   const lines: string[] = [];
 
@@ -54,10 +55,18 @@ function generateStatementsForEvent(
   const locatorExpression: string =
     event.locator === null ? "page" : locatorToPlaywrightExpression(event.locator);
 
-  if (event.type === "navigate") {
-    lines.push(INDENT + "await page.goto(" + quote(event.pageUrl) + ");");
-  } else if (event.type === "url-change") {
-    lines.push(INDENT + "await page.waitForURL(" + quote(event.pageUrl) + ");");
+  if (event.type === "navigate" || event.type === "url-change") {
+    // The previous step already emitted a waitForURL for exactly this URL
+    // because it caused this navigation. Emitting a goto as well would do a
+    // full page load and throw away the state the previous action established.
+    if (alreadyAwaitedUrl === event.pageUrl) {
+      return [];
+    }
+    if (event.type === "navigate") {
+      lines.push(INDENT + "await page.goto(" + quote(event.pageUrl) + ");");
+    } else {
+      lines.push(INDENT + "await page.waitForURL(" + quote(event.pageUrl) + ");");
+    }
   } else if (event.type === "reload") {
     lines.push(INDENT + "await page.reload();");
   } else if (event.type === "click") {
@@ -193,21 +202,40 @@ export function generatePlaywrightSpec(
 
   let stepNumber: number = startUrl === "" ? 1 : 2;
 
+  // The URL the previous step already waited for, so the next step does not
+  // navigate to it a second time.
+  let alreadyAwaitedUrl: string = "";
+
   for (let index = 0; index < usableEvents.length; index = index + 1) {
     const event: RecordedEvent = usableEvents[index];
+    const nextEvent: RecordedEvent | null = nextEventAfter(usableEvents, index);
 
     // Skip a leading navigation to the URL we already opened above.
     if (index === 0 && event.type === "navigate" && event.pageUrl === startUrl) {
+      alreadyAwaitedUrl = "";
       continue;
     }
 
     const statementLines: string[] = generateStatementsForEvent(
       event,
-      nextEventAfter(usableEvents, index),
+      nextEvent,
       stepNumber,
       networkEntries,
       usableEvents,
+      alreadyAwaitedUrl,
     );
+
+    // Remember whether THIS step emitted a wait the next one should honour.
+    const emittedWait: boolean = statementLines.some(
+      function isWait(line: string): boolean {
+        return line.includes("await page.waitForURL(");
+      });
+    alreadyAwaitedUrl = emittedWait && nextEvent !== null ? nextEvent.pageUrl : "";
+
+    if (statementLines.length === 0) {
+      continue;   // Nothing emitted, so this is not a step the reader counts.
+    }
+
     for (let lineIndex = 0; lineIndex < statementLines.length; lineIndex = lineIndex + 1) {
       lines.push(statementLines[lineIndex]);
     }

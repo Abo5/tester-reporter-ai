@@ -24,11 +24,24 @@ endpoint and body shape are right, and schema-constrained JSON output works. An
 earlier version of this file warned that the model might not exist — that
 caution was reasonable when written and is now simply wrong.
 
-**What is still unverified is the video path and the browser path.** The live
-run sent text evidence only, so nothing proves the Files API upload or which
-video MIME types are accepted. And nothing in this repository has run inside
-Chrome: `tabCapture`, the offscreen `MediaRecorder`, and the microphone grant
-are all still theory.
+**The extension has been run in a real Chromium and graded.** `npm run test:e2e`
+loads `dist/` into Chromium, records a session on a page with five documented
+defects, finds all five, and then takes the `.spec.ts` it generated and **runs
+it** — in English and in Arabic RTL. `npm run test:e2e:site` does the same
+against the real OrangeHRM demo. `npm run test:e2e:ai` proves the whole chain
+once: real capture → real redaction → real Gemini → rendered report.
+
+That testing found **eleven defects the 93 offline tests could not**, including
+one that silently dropped a recorded step every time a tester typed a value and
+pressed Enter. Section 20 of PLAN.md lists all eleven and why each was invisible
+offline.
+
+**What is still unproven is the video path.** `tabCapture` needs a real toolbar
+click, which a harness cannot synthesise, so no session under test produced a
+video — leaving the Files API upload, accepted video MIME types, MP4 recording
+and the microphone-from-offscreen question open. Everything *around* the video
+is proven: the failure degrades correctly, the report is still produced, and
+`evidenceUsed.video` comes back `false`.
 
 **`uploadVideoToFilesApi` in [`src/ai/gemini.ts`](src/ai/gemini.ts) is still a
 sketch of the flow, not verified code**, and says so inline. The live test does
@@ -39,6 +52,16 @@ Recording, capture, code generation and redaction do **not** depend on any of
 that, and are covered by the test suite.
 
 ---
+
+## The seeded defect bench
+
+A live page with five deliberate, documented defects, for checking whether your
+capture tooling finds them all — and whether it invents a sixth:
+
+**https://claude.ai/code/artifact/372b6b69-07ae-474c-8dc8-5e5597da0d20**
+
+The same page is in [`fixtures/bench.html`](fixtures/bench.html) and is what
+`npm run test:e2e` grades against.
 
 ## Install for development
 
@@ -77,7 +100,11 @@ the written report needs one.
 | `npm run typecheck` | `tsc --noEmit`, strict mode |
 | `npm test` | Bundles the test API and runs the suite |
 | `npm run verify` | All three, in order (never touches the network) |
-| `npm run test:live` | **The one test that calls the real Gemini API.** Needs a key in `.env` |
+| `npm run test:e2e` | 11 tests in a real Chromium, including the graded bench and the replay round-trip |
+| `npm run test:e2e:site` | Against the real OrangeHRM demo application |
+| `npm run test:live` | Five checks against the real Gemini API. Needs a key in `.env` |
+| `npm run test:e2e:ai` | The whole chain once: capture → redaction → Gemini → rendered report |
+| `npm run test:all` | Everything above, in order |
 | `npm run clean` | Removes `dist/` and `dist-test/` |
 
 ## Layout
@@ -262,8 +289,45 @@ current documentation.
 
 ## Testing
 
-86 offline tests, no browser and no API key required. jsdom is a test-only
-dependency.
+Five layers, cheapest first. Only the first is required to work on the project.
+
+**93 offline unit tests** (`npm test`) — no browser, no key, no network. jsdom is
+a test-only dependency.
+
+The load-bearing one is in [`tests/prune-dom.test.mjs`](tests/prune-dom.test.mjs):
+given a catalog page whose tabs read *"Contract Renewal & Continuation"* and
+friends, the pruned DOM must still contain **every label, verbatim, in order**.
+If a change to the pruning policy breaks that test, the change is wrong —
+however much smaller it makes the output.
+
+**11 browser tests** (`npm run test:e2e`) — a real Chromium with the real
+extension loaded. The two that matter:
+
+- **The graded bench.** [`fixtures/bench.html`](fixtures/bench.html) has five
+  *documented* defects, so a run can be scored rather than admired. Two of them
+  are invisible on screen and exist only in the markup — the argument for
+  capturing page code rather than screenshots, made concrete. The suite asserts
+  all five are captured *and* that no sixth was invented.
+- **The replay round-trip.** Record a session, take the `.spec.ts` the extension
+  generated, and run it with Playwright. If that fails, the product's central
+  promise is not true, however good the report looks.
+
+**The real-site test** (`npm run test:e2e:site`) — OrangeHRM, a real React app
+whose class names change on every build. All four locators resolved to `role` +
+accessible name with zero xpath fallbacks, and the password was redacted at
+capture time while the username was deliberately left alone.
+
+**The live AI test** (`npm run test:live`) and **the full pipeline**
+(`npm run test:e2e:ai`) — described above.
+
+The suite also covers: the redaction gate failing closed on malformed input, a
+`fill()` in the generated script losing a card number, a credential printed as
+page text being redacted while its label survives, the selector chain never
+touching a class name, list-row anchoring, the generated spec containing no
+arbitrary sleeps, the validator rejecting an invented specification wearing a
+not-determinable flag, video offsets staying correct across a pause, and the
+serialisation that prevents concurrent handlers from overwriting each other's
+recorded steps.
 
 `npm test` takes around 40 seconds on a Raspberry Pi and a few seconds on a
 laptop. Almost all of it is jsdom construction in `prune-dom` and `selector`,
