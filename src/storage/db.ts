@@ -129,7 +129,29 @@ export async function putRecord<T>(storeName: string, record: T): Promise<void> 
   const database: IDBDatabase = await openDatabase();
   const transaction: IDBTransaction = database.transaction(storeName, "readwrite");
   const store: IDBObjectStore = transaction.objectStore(storeName);
-  await promisifyRequest(store.put(record as unknown as never));
+
+  store.put(record as unknown as never);
+
+  // Wait for the TRANSACTION, not the request.
+  //
+  // request.onsuccess fires when that one request succeeds; the transaction can
+  // still abort afterwards, and a quota failure writing a 60 MB video Blob does
+  // exactly that. Resolving on the request meant storeMediaBlob handed back a
+  // media id for a Blob that was never committed, and the session then pointed
+  // at nothing.
+  await new Promise<void>(function executor(resolve, reject): void {
+    transaction.oncomplete = function onComplete(): void {
+      resolve();
+    };
+    transaction.onerror = function onError(): void {
+      reject(transaction.error ?? new Error("The write transaction failed."));
+    };
+    transaction.onabort = function onAbort(): void {
+      reject(transaction.error
+        ?? new Error("The write transaction was aborted, most likely by a "
+          + "storage quota limit."));
+    };
+  });
 }
 
 

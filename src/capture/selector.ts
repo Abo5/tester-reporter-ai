@@ -22,11 +22,24 @@ import {
   getVisibleText,
   getAssociatedLabelText,
   cssEscape,
+  tagsForImplicitRole,
 } from "./accessible-name";
 import {
   MAX_VISIBLE_TEXT_CHARACTERS,
   MAX_CSS_PATH_DEPTH,
 } from "../shared/constants";
+
+/**
+ * Ceilings that keep one interaction's locator work bounded.
+ *
+ * Capture runs synchronously inside the click handler, ahead of the
+ * application's own listener, so an unbounded scan is felt as a freeze by the
+ * tester. Giving up on an exact count is a slightly weaker locator; freezing the
+ * page for seconds makes the tool unusable on exactly the large enterprise
+ * pages it was built for.
+ */
+const MAX_TEXT_NODES_SCANNED: number = 4000;
+const MAX_SIBLING_ROWS_SCANNED: number = 300;
 
 /** Attributes a team may have used for test ids, in the order we trust them. */
 const TEST_ID_ATTRIBUTES: readonly string[] = [
@@ -129,12 +142,29 @@ function countElementsWithRoleAndName(
   accessibleName: string,
 ): number {
   const root: Document | ShadowRoot = getSearchRootFor(element);
-  const allElements: NodeListOf<Element> = root.querySelectorAll("*");
+
+  // Narrow with a native query before computing anything expensive. Scanning
+  // every element and resolving its accessible name meant getComputedStyle ran
+  // over most of the document inside the click handler, ahead of the
+  // application's own listener.
+  const selectors: string[] = ['[role="' + role + '"]'];
+  const implicitTags: string[] = tagsForImplicitRole(role);
+  for (let index = 0; index < implicitTags.length; index = index + 1) {
+    selectors.push(implicitTags[index]);
+  }
+
+  let candidates: NodeListOf<Element>;
+  try {
+    candidates = root.querySelectorAll(selectors.join(","));
+  } catch (selectorError: unknown) {
+    return 0;
+  }
+
   let count: number = 0;
-  for (let index = 0; index < allElements.length; index = index + 1) {
-    const candidate: Element = allElements[index];
+  for (let index = 0; index < candidates.length; index = index + 1) {
+    const candidate: Element = candidates[index];
     if (getAriaRole(candidate) !== role) {
-      continue;
+      continue;   // An explicit role attribute can override the implicit one.
     }
     if (getAccessibleName(candidate) === accessibleName) {
       count = count + 1;
@@ -239,13 +269,64 @@ function buildAttributeCandidate(
  */
 function countElementsWithExactText(element: Element, text: string): number {
   const root: Document | ShadowRoot = getSearchRootFor(element);
-  const allElements: NodeListOf<Element> = root.querySelectorAll("*");
+
+  // Search from the TEXT NODES up, not from every element down.
+  //
+  // The element-first version called textContent on all of them, and
+  // textContent on a <table> or a <tbody> builds a string of the entire
+  // subtree. On a 600-row table that is thousands of large string
+  // concatenations for one click, and a single locator took several SECONDS -
+  // a freeze the tester would feel, in the click handler, before the page's own
+  // handler ran.
+  // element.ownerDocument works for a light-DOM element and for one inside a
+  // shadow root alike, and avoids depending on `Document` being a global - it
+  // is not, in every context this file is exercised from.
+  const ownerDocument: Document = element.ownerDocument;
+
+  // 4 is NodeFilter.SHOW_TEXT, spelled out for the same reason.
+  const walker: TreeWalker =
+    ownerDocument.createTreeWalker(root as unknown as Node, 4, null);
+
+  const seen: Set<Element> = new Set<Element>();
   let count: number = 0;
-  for (let index = 0; index < allElements.length; index = index + 1) {
-    if (getVisibleText(allElements[index]) === text) {
-      count = count + 1;
+  let visited: number = 0;
+
+  while (walker.nextNode() !== null) {
+    visited = visited + 1;
+    if (visited > MAX_TEXT_NODES_SCANNED) {
+      break;   // Give up counting rather than freeze the page.
+    }
+
+    const textNode: Node | null = walker.currentNode;
+    if (textNode === null || (textNode.textContent ?? "").trim() === "") {
+      continue;
+    }
+    if (!text.includes((textNode.textContent ?? "").trim())
+        && !(textNode.textContent ?? "").includes(text)) {
+      continue;
+    }
+
+    // Only the text node's own element, and wrappers around it, can have this
+    // as their WHOLE visible text. Stop climbing as soon as an ancestor has
+    // more than one element child: a <tbody> with 600 rows cannot have "View"
+    // as its visible text, and asking costs a walk of the entire table.
+    let candidate: Element | null = textNode.parentElement;
+    let depth: number = 0;
+    while (candidate !== null && depth < 3) {
+      if (!seen.has(candidate)) {
+        seen.add(candidate);
+        if (getVisibleText(candidate) === text) {
+          count = count + 1;
+        }
+      }
+      if (candidate.childElementCount > 1) {
+        break;
+      }
+      candidate = candidate.parentElement;
+      depth = depth + 1;
     }
   }
+
   return count;
 }
 
@@ -532,25 +613,43 @@ function findUniqueTextInsideRow(row: Element): string {
   }
 
   const candidateTexts: string[] = [];
-  const cells: NodeListOf<Element> = row.querySelectorAll("td, th, [role='cell'], span, div");
+  const cells: NodeListOf<Element> =
+    row.querySelectorAll("td, th, [role='cell'], span, div");
   for (let index = 0; index < cells.length && index < 30; index = index + 1) {
     const text: string = getVisibleText(cells[index]);
     if (text.length >= 3 && text.length <= 60) {
       candidateTexts.push(text);
     }
   }
+  if (candidateTexts.length === 0) {
+    return "";
+  }
+
+  // Read every sibling's text ONCE.
+  //
+  // The previous version re-read it for each candidate, so a 600-row table with
+  // 30 candidate strings meant eighteen thousand textContent reads, each
+  // building the whole row's string. That was the other half of the multi-second
+  // freeze on a single click.
+  const siblingTexts: string[] = [];
+  const siblingLimit: number =
+    Math.min(parent.children.length, MAX_SIBLING_ROWS_SCANNED);
+  for (let index = 0; index < siblingLimit; index = index + 1) {
+    const sibling: Element = parent.children[index];
+    if (sibling === row) {
+      continue;
+    }
+    siblingTexts.push(sibling.textContent ?? "");
+  }
 
   for (let index = 0; index < candidateTexts.length; index = index + 1) {
     const text: string = candidateTexts[index];
     let occurrencesInOtherRows: number = 0;
-    for (let siblingIndex = 0; siblingIndex < parent.children.length;
+    for (let siblingIndex = 0; siblingIndex < siblingTexts.length;
          siblingIndex = siblingIndex + 1) {
-      const sibling: Element = parent.children[siblingIndex];
-      if (sibling === row) {
-        continue;
-      }
-      if ((sibling.textContent ?? "").includes(text)) {
+      if (siblingTexts[siblingIndex].includes(text)) {
         occurrencesInOtherRows = occurrencesInOtherRows + 1;
+        break;   // One collision is enough to reject this candidate.
       }
     }
     if (occurrencesInOtherRows === 0) {

@@ -108,9 +108,22 @@ export function getAriaRole(element: Element): string {
  */
 export function getVisibleText(element: Element): string {
   const parts: string[] = [];
-  collectVisibleTextInto(element, parts, 0);
+  const budget: { remaining: number } = { remaining: MAX_TEXT_COLLECTION_NODES };
+  collectVisibleTextInto(element, parts, 0, budget);
   return collapseWhitespace(parts.join(" "));
 }
+
+/**
+ * How many nodes one getVisibleText call may touch.
+ *
+ * This runs inside the click handler, and every element it visits costs a
+ * getComputedStyle. Walking a 600-row table to discover that its visible text
+ * is not "View" is thousands of style resolutions for an answer that was
+ * obvious. Anything that overruns the budget cannot have a short label as its
+ * whole visible text anyway, so the truncated result is still correct for the
+ * comparison it is used in.
+ */
+const MAX_TEXT_COLLECTION_NODES: number = 400;
 
 /** Recursion depth limit, so a pathological tree cannot hang the page. */
 const MAX_TEXT_COLLECTION_DEPTH: number = 12;
@@ -122,8 +135,9 @@ function collectVisibleTextInto(
   element: Element,
   parts: string[],
   depth: number,
+  budget: { remaining: number },
 ): void {
-  if (depth > MAX_TEXT_COLLECTION_DEPTH) {
+  if (depth > MAX_TEXT_COLLECTION_DEPTH || budget.remaining <= 0) {
     return;
   }
   for (let index = 0; index < element.childNodes.length; index = index + 1) {
@@ -145,10 +159,14 @@ function collectVisibleTextInto(
     if (childElement.tagName === "SCRIPT" || childElement.tagName === "STYLE") {
       continue;
     }
+    budget.remaining = budget.remaining - 1;
+    if (budget.remaining <= 0) {
+      return;
+    }
     if (isElementHidden(childElement)) {
       continue;
     }
-    collectVisibleTextInto(childElement, parts, depth + 1);
+    collectVisibleTextInto(childElement, parts, depth + 1, budget);
   }
 }
 
@@ -333,4 +351,31 @@ export function cssEscape(value: string): string {
     }
   }
   return escaped;
+}
+
+/**
+ * Reverse of IMPLICIT_ROLE_BY_TAG: which tags can carry a given role natively.
+ * Used to narrow a role search to a candidate set instead of the whole page.
+ */
+export function tagsForImplicitRole(role: string): string[] {
+  const tags: string[] = [];
+  const tagNames: string[] = Object.keys(IMPLICIT_ROLE_BY_TAG);
+  for (let index = 0; index < tagNames.length; index = index + 1) {
+    if (IMPLICIT_ROLE_BY_TAG[tagNames[index]] === role) {
+      tags.push(tagNames[index].toLowerCase());
+    }
+  }
+
+  // input types map to roles too, and <input> is the single most common
+  // control, so it must be included or a textbox search would miss every one.
+  const inputTypes: string[] = Object.keys(ROLE_BY_INPUT_TYPE);
+  for (let index = 0; index < inputTypes.length; index = index + 1) {
+    if (ROLE_BY_INPUT_TYPE[inputTypes[index]] === role) {
+      tags.push('input[type="' + inputTypes[index] + '"]');
+      if (inputTypes[index] === "text") {
+        tags.push("input:not([type])");
+      }
+    }
+  }
+  return tags;
 }

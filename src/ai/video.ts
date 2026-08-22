@@ -149,10 +149,17 @@ export function chooseKeyFrameOffsets(
  * WHY no library: a <video> element plus a <canvas> does this natively, and
  * adding an encoder dependency for a fallback path is not justified.
  */
+export interface ExtractedKeyFrames {
+  /** base64 JPEG payloads, without the data: prefix. */
+  frames: string[];
+  /** The offset each frame was ACTUALLY taken at, aligned with `frames`. */
+  offsetsMs: number[];
+}
+
 export async function extractKeyFrames(
   videoBlob: Blob,
   offsetsMs: number[],
-): Promise<string[]> {
+): Promise<ExtractedKeyFrames> {
   const objectUrl: string = URL.createObjectURL(videoBlob);
   const videoElement: HTMLVideoElement = document.createElement("video");
   videoElement.src = objectUrl;
@@ -160,6 +167,11 @@ export async function extractKeyFrames(
   videoElement.preload = "auto";
 
   const frames: string[] = [];
+  // Kept in step with `frames`. An earlier version returned only the frames and
+  // let the caller do offsets.slice(0, frames.length), which assumes every
+  // failed seek was at the END. A failure in the middle shifted every later
+  // frame's label by one, so the model was told the wrong moment for each.
+  const achievedOffsetsMs: number[] = [];
 
   try {
     await new Promise<void>(function executor(resolve, reject): void {
@@ -205,6 +217,7 @@ export async function extractKeyFrames(
       const commaIndex: number = dataUrl.indexOf(",");
       if (commaIndex !== -1) {
         frames.push(dataUrl.slice(commaIndex + 1));
+        achievedOffsetsMs.push(offsetsMs[index]);
       }
     }
   } finally {
@@ -214,7 +227,7 @@ export async function extractKeyFrames(
   if (frames.length === 0) {
     throw new Error("No frames could be extracted from the recording.");
   }
-  return frames;
+  return { frames: frames, offsetsMs: achievedOffsetsMs };
 }
 
 /**
@@ -318,13 +331,14 @@ export async function prepareVideoForAI(
     try {
       const offsets: number[] =
         chooseKeyFrameOffsets(mediaInfo.durationMs, events, failureEventIndexes);
-      const frames: string[] = await extractKeyFrames(videoBlob, offsets);
+      const extracted = await extractKeyFrames(videoBlob, offsets);
+      const frames: string[] = extracted.frames;
       return {
         deliveryMode: "key-frames",
         fileUri: "",
         base64Data: "",
         keyFrameBase64: frames,
-        keyFrameOffsetsMs: offsets.slice(0, frames.length),
+        keyFrameOffsetsMs: extracted.offsetsMs,
         mimeType: "image/jpeg",
         durationMs: mediaInfo.durationMs,
         sizeBytes: videoBlob.size,
@@ -391,14 +405,15 @@ export async function downgradeVideoToKeyFrames(
   try {
     const offsets: number[] =
       chooseKeyFrameOffsets(prepared.durationMs, events, failureEventIndexes);
-    const frames: string[] = await extractKeyFrames(videoBlob, offsets);
+    const extracted = await extractKeyFrames(videoBlob, offsets);
+    const frames: string[] = extracted.frames;
     return {
       ...prepared,
       deliveryMode: "key-frames",
       fileUri: "",
       base64Data: "",
       keyFrameBase64: frames,
-      keyFrameOffsetsMs: offsets.slice(0, frames.length),
+      keyFrameOffsetsMs: extracted.offsetsMs,
       mimeType: "image/jpeg",
       downgradeReason: reason + " " + String(frames.length)
         + " still frames were sent instead.",

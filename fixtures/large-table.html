@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Large results table</title>
+<style>body{font-family:system-ui;margin:0;padding:16px}
+table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:4px 8px;font-size:13px}</style>
+</head>
+<body>
+<h1>Contracts</h1>
+<div role="tablist">
+  <button role="tab" aria-selected="true">All</button>
+  <button role="tab">Active</button>
+  <button role="tab">Expired</button>
+</div>
+<table><thead><tr><th>Tenant</th><th>Contract</th><th>Status</th><th>Action</th></tr></thead>
+<tbody id="rows"></tbody></table>
+<p id="out" role="status"></p>
+<script>
+  var html = "";
+  for (var i = 0; i < 600; i++) {
+    html += '<tr><td>TN-' + (40000 + i) + '</td><td>C-' + (1000 + i) +
+      '</td><td>' + (i % 3 === 0 ? 'Expired' : 'Active') +
+      '</td><td><button class="view">View</button></td></tr>';
+  }
+  document.getElementById('rows').innerHTML = html;
+  document.getElementById('rows').addEventListener('click', function (e) {
+    if (e.target.classList.contains('view')) {
+      var t = e.target.closest('tr').querySelector('td').textContent;
+      document.getElementById('out').textContent = 'Opened ' + t;
+    }
+  });
+</script>
+</body></html>

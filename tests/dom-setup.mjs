@@ -36,6 +36,9 @@ export function installDom(html) {
   globalThis.DOMRect = window.DOMRect;
   globalThis.getComputedStyle = window.getComputedStyle.bind(window);
   globalThis.CSS = window.CSS;
+  globalThis.Document = window.Document;
+  globalThis.NodeFilter = window.NodeFilter;
+  globalThis.TreeWalker = window.TreeWalker;
 
   return window;
 }
