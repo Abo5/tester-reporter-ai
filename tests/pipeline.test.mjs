@@ -428,3 +428,12 @@ test("a negative retention value deletes nothing", async () => {
   const { applyRetentionPolicy } = await import("../dist-test/test-api.mjs");
   assert.equal(await applyRetentionPolicy(-5, Date.now()), 0);
 });
+
+test("the prompt tells the model not to escape quotes in human-readable text", () => {
+  // Observed from a live run: the model quoted a JSON response body with
+  // escaped inner quotes, so the pasted ticket read {\"error\":\"...\"}.
+  // The fix belongs in the instruction, not in a post-hoc string cleanup that
+  // would risk corrupting legitimate backslashes.
+  assert.ok(api.SYSTEM_INSTRUCTION.includes("Do NOT add backslashes"));
+  assert.ok(api.SYSTEM_INSTRUCTION.includes("for a HUMAN to read"));
+});

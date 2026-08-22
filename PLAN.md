@@ -18,40 +18,45 @@ Throughout this document:
 - **"Proposed design"** — this is my recommendation, not a fact about the platform.
 - **`⚠️ VERIFY`** — I am not certain, or the thing changes often. Check the docs.
 
-### 0.1 The single biggest thing to verify: the model ID
+### 0.1 The model ID — RESOLVED BY A REAL CALL
 
-The specification fixes the model as `gemini-3.5-flash`. **I cannot confirm that a model
-with that exact ID exists.** As of my cutoff I am aware of the `gemini-2.x-flash` family;
-whether a `gemini-3.5-flash` exists, and whether it is generally available with video
-input and structured output, I do not know. I have followed the instruction and used that
-string as the **default value of a configurable setting**, exactly as required — but:
+This section originally said I could not confirm that `gemini-3.5-flash` exists, and
+warned that it might need replacing.
 
-> ⚠️ VERIFY: that `gemini-3.5-flash` exists, is GA, accepts video input, and supports
-> JSON-schema-constrained output, against the official Gemini API model list. If it does
-> not, change one constant in `src/shared/constants.ts`. No business logic contains the
-> model ID.
+**A live integration test has since been run against the real API, and it passed 5/5.**
+`gemini-3.5-flash` exists, accepts a system instruction, and honours
+JSON-schema-constrained output exactly as this design assumes. The caution below was
+warranted when written; it is no longer accurate, and leaving it standing would be more
+misleading than the original uncertainty was.
+
+Still genuinely unverified for this model: **video input** — the live run sent text
+evidence only, so nothing here proves the Files API upload path or the accepted video
+MIME types. Those remain ⚠️ VERIFY (V5, V6).
 
 ### 0.2 Master verification checklist
 
 Do these before writing any code that touches an external API. Tick them off.
 
-| # | Thing to verify | Where |
-|---|---|---|
-| V1 | `gemini-3.5-flash` exists / is GA / is multimodal | Gemini API model list |
-| V2 | `generateContent` endpoint path and request body shape | Gemini API reference |
-| V3 | Exact parameter names for structured JSON output (I use `responseMimeType` + `responseSchema` under `generationConfig` from memory) | Gemini API structured-output docs |
-| V4 | Parameter name for thinking / reasoning level, and whether this model has one | Gemini API docs |
-| V5 | Supported video MIME types (is `video/webm` accepted?) and max duration | Gemini API video docs |
-| V6 | Inline base64 size threshold vs. Files API — and the Files API upload flow and retention window | Gemini API files docs |
-| V7 | Current price per 1M input tokens, per 1M output tokens, and how video seconds are tokenised | Gemini API pricing page |
-| V8 | `chrome.offscreen` reason enum values (`USER_MEDIA`, `DISPLAY_MEDIA`, `BLOBS`, …) | Chrome offscreen API docs |
-| V9 | `chrome.tabCapture.getMediaStreamId()` signature + the `getUserMedia` constraint shape used to consume the stream ID | Chrome tabCapture docs + offscreen recording sample |
-| V10 | Whether a microphone permission prompt can be raised from an offscreen document, or must be pre-granted from a normal extension page | Chrome offscreen / permissions docs |
-| V11 | MV3 service-worker idle-termination semantics as of the Chrome version you target | Chrome service worker lifecycle docs |
-| V12 | `MediaRecorder.isTypeSupported('video/mp4;codecs=avc1…')` in your target Chrome | Test in the browser, not the docs |
-| V13 | `content_scripts[].world: "MAIN"` minimum Chrome version | Chrome content scripts docs |
-| V14 | Whether `chrome.webRequest` (non-blocking) still reports `statusCode` in `onCompleted`/`onErrorOccurred` in MV3 with only host permissions | Chrome webRequest docs |
-| V15 | Whether `fetch()` to `generativelanguage.googleapis.com` from an MV3 service worker needs the host in `host_permissions` (I assume yes) | Chrome CORS-for-extensions docs |
+Run `npm run test:live` with a key in `.env` to settle V1–V3 in ten seconds. It has
+been run, and they are settled.
+
+| # | Thing to verify | Where | Status |
+|---|---|---|---|
+| V1 | `gemini-3.5-flash` exists / is GA | Gemini API model list | ✅ **CONFIRMED** by live test |
+| V2 | `generateContent` endpoint path and request body shape | Gemini API reference | ✅ **CONFIRMED** by live test |
+| V3 | Exact parameter names for structured JSON output (`responseMimeType` + `responseSchema` under `generationConfig`) | Gemini API structured-output docs | ✅ **CONFIRMED** by live test |
+| V4 | Parameter name for thinking / reasoning level, and whether this model has one | Gemini API docs | ⬜ still open |
+| V5 | Supported video MIME types (is `video/webm` accepted?) and max duration | Gemini API video docs | ⬜ still open |
+| V6 | Inline base64 size threshold vs. Files API — and the Files API upload flow and retention window | Gemini API files docs | ⬜ still open |
+| V7 | Current price per 1M input tokens, per 1M output tokens, and how video seconds are tokenised | Gemini API pricing page | ⬜ still open |
+| V8 | `chrome.offscreen` reason enum values (`USER_MEDIA`, `DISPLAY_MEDIA`, `BLOBS`, …) | Chrome offscreen API docs | ⬜ browser, still open |
+| V9 | `chrome.tabCapture.getMediaStreamId()` signature + the `getUserMedia` constraint shape used to consume the stream ID | Chrome tabCapture docs + offscreen recording sample | ⬜ browser, still open |
+| V10 | Whether a microphone permission prompt can be raised from an offscreen document, or must be pre-granted from a normal extension page | Chrome offscreen / permissions docs | ⬜ browser, still open |
+| V11 | MV3 service-worker idle-termination semantics as of the Chrome version you target | Chrome service worker lifecycle docs | ⬜ browser, still open |
+| V12 | `MediaRecorder.isTypeSupported('video/mp4;codecs=avc1…')` in your target Chrome | Test in the browser, not the docs | ⬜ browser, still open |
+| V13 | `content_scripts[].world: "MAIN"` minimum Chrome version | Chrome content scripts docs | ⬜ browser, still open |
+| V14 | Whether `chrome.webRequest` (non-blocking) still reports `statusCode` in `onCompleted`/`onErrorOccurred` in MV3 with only host permissions | Chrome webRequest docs | ⬜ browser, still open |
+| V15 | Whether `fetch()` to `generativelanguage.googleapis.com` from an MV3 service worker needs the host in `host_permissions` (I assume yes) | Chrome CORS-for-extensions docs | ⬜ browser, still open |
 
 ---
 

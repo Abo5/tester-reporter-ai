@@ -18,21 +18,22 @@ of limitations are in **[PLAN.md](PLAN.md)**.
 
 ## ⚠️ Read this before you run it
 
-**The AI model id is unverified.** The project is configured for
-`gemini-3.5-flash`, which the author could not confirm exists. It appears in
-exactly one place — `SUPPORTED_MODELS` in
-[`src/shared/constants.ts`](src/shared/constants.ts) — and never in business
-logic. Check the official Gemini model list and change that constant before you
-expect a report to come back.
+**The model and the request shape are confirmed working.** `npm run test:live`
+has been run against the real API and passed 5/5: `gemini-3.5-flash` exists, the
+endpoint and body shape are right, and schema-constrained JSON output works. An
+earlier version of this file warned that the model might not exist — that
+caution was reasonable when written and is now simply wrong.
 
-**The whole Gemini request surface is marked `VERIFY` in the code.** Endpoint
-paths, structured-output parameter names, the Files API upload handshake, video
-MIME types and token accounting all change between releases. The `uploadVideoToFilesApi`
-function in [`src/ai/gemini.ts`](src/ai/gemini.ts) carries an explicit note that it
-is a sketch of the flow, not verified code. **Make one real API call by hand and
-write down what comes back before trusting that file.** Section 0.2 of PLAN.md is
-a 15-item verification checklist (V1–V15) covering both Gemini and the Chrome
-APIs the author was less than certain about.
+**What is still unverified is the video path and the browser path.** The live
+run sent text evidence only, so nothing proves the Files API upload or which
+video MIME types are accepted. And nothing in this repository has run inside
+Chrome: `tabCapture`, the offscreen `MediaRecorder`, and the microphone grant
+are all still theory.
+
+**`uploadVideoToFilesApi` in [`src/ai/gemini.ts`](src/ai/gemini.ts) is still a
+sketch of the flow, not verified code**, and says so inline. The live test does
+not exercise it. Section 0.2 of PLAN.md is the full checklist (V1–V15) with
+V1–V3 now marked confirmed and the rest still open.
 
 Recording, capture, code generation and redaction do **not** depend on any of
 that, and are covered by the test suite.
@@ -261,8 +262,13 @@ current documentation.
 
 ## Testing
 
-85 offline tests, no browser and no API key required. jsdom is a test-only
+86 offline tests, no browser and no API key required. jsdom is a test-only
 dependency.
+
+`npm test` takes around 40 seconds on a Raspberry Pi and a few seconds on a
+laptop. Almost all of it is jsdom construction in `prune-dom` and `selector`,
+which build a fresh DOM per test on purpose so no test can leak state into the
+next one. The tests themselves account for under three seconds.
 
 The load-bearing one is in [`tests/prune-dom.test.mjs`](tests/prune-dom.test.mjs):
 given a catalog page whose tabs read *"Contract Renewal & Continuation"* and
