@@ -290,3 +290,126 @@ test("ordinary prose containing the word password is not mangled", () => {
   assert.equal(result, text,
     "a sentence with no colon or equals must not trigger the rule");
 });
+
+// --- The structural guard ---------------------------------------------------
+
+test("NO string field anywhere in the bundle escapes the gate", () => {
+  // This is the test that matters. Checking one field at a time is how the
+  // significanceReason leak survived: it embedded the raw page URL, redaction
+  // never touched that field, and every existing test happened to look
+  // somewhere else.
+  //
+  // So: plant the same recognisable secret in EVERY string in a fully populated
+  // bundle, run the gate, and walk the result. Any surviving copy is a leak,
+  // whatever field it is in and whenever it was added.
+  const SECRET = "SA0380000000608010167519";     // an IBAN shape the gate knows
+
+  const bundle = {
+    sessionId: "s1",
+    reportLanguage: "en",
+    actionTrace: [{
+      stepNumber: 1,
+      actionType: "input",
+      elementDescription: `field near ${SECRET}`,
+      inputValue: SECRET,
+      wasRedacted: false,
+      pageUrl: `https://staging.example.sa/x?iban=${SECRET}`,
+      wallClockMs: 1,
+      videoTimestamp: "00:01",
+      videoOffsetMs: 1000,
+    }],
+    playwrightScript: `await page.getByLabel('IBAN').fill('${SECRET}');`,
+    domSnapshots: [{
+      snapshotId: "d1",
+      trigger: "navigation",
+      significanceReason: `The page after navigating to /x?iban=${SECRET}`,
+      videoTimestamp: "00:01",
+      pageUrl: `https://staging.example.sa/x?iban=${SECRET}`,
+      documentLang: "en",
+      documentDir: "ltr",
+      prunedHtml: `<document><p>IBAN: ${SECRET}</p></document>`,
+      wasTruncated: false,
+    }],
+    elementContext: [{
+      stepNumber: 1,
+      elementDescription: `the IBAN field (${SECRET})`,
+      videoTimestamp: "00:01",
+      elementHtml: `<input name="iban" value="${SECRET}" />`,
+      ancestorHtml: `<form>${SECRET}</form>`,
+      siblingHtml: [`<span>${SECRET}</span>`],
+      computedStyles: { direction: "ltr" },
+      ariaState: {
+        role: "", ariaLabel: SECRET, ariaDescribedByText: SECRET,
+        ariaExpanded: "", ariaInvalid: "", ariaDisabled: "", ariaChecked: "",
+        ariaSelected: "", ariaHidden: "", isNativelyDisabled: false,
+        isReadOnly: false, isRequired: false, validationMessage: SECRET,
+      },
+      inheritedLang: "en",
+      inheritedDir: "ltr",
+    }],
+    networkFailures: [{
+      id: "n1", sessionId: "s1", source: "page-world-patch",
+      method: "POST", url: `https://staging.example.sa/api?iban=${SECRET}`,
+      statusCode: 500, statusText: "err", startedAtMs: 1, durationMs: 1,
+      videoOffsetMs: 1,
+      requestBodyExcerpt: `{"iban":"${SECRET}"}`,
+      responseBodyExcerpt: `{"echo":"${SECRET}"}`,
+      requestHeaders: { "X-Trace": SECRET },
+      responseContentType: "application/json",
+      isFailure: true,
+      initiatorPageUrl: `https://staging.example.sa/p?iban=${SECRET}`,
+    }],
+    consoleErrors: [{
+      id: "c1", sessionId: "s1", level: "error",
+      message: `failed for ${SECRET}`,
+      stackExcerpt: `at handler (${SECRET}.js:1)`,
+      wallClockMs: 1, videoOffsetMs: 1,
+      pageUrl: `https://staging.example.sa/p?iban=${SECRET}`,
+    }],
+    video: {
+      deliveryMode: "omitted", fileUri: "", base64Data: "",
+      keyFrameBase64: [], keyFrameOffsetsMs: [], mimeType: "",
+      durationMs: 0, sizeBytes: 0, downgradeReason: "",
+    },
+    pageMeta: {
+      title: `Account ${SECRET}`,
+      url: `https://staging.example.sa/p?iban=${SECRET}`,
+      documentLang: "en", documentDir: "ltr",
+      viewportWidth: 1280, viewportHeight: 720,
+      detectedEnvironment: "staging", userAgent: "test",
+    },
+    redactionCompleted: false,
+    redactionSummary: {},
+    truncationNotes: [],
+    estimatedInputTokens: 0,
+  };
+
+  const clean = api.redactSensitiveData(bundle, []);
+
+  // Walk every string in the result and report the exact path of any survivor,
+  // so a failure names the field instead of just saying "somewhere".
+  const leaks = [];
+  const walk = (node, path) => {
+    if (typeof node === "string") {
+      if (node.includes(SECRET)) {
+        leaks.push(path);
+      }
+      return;
+    }
+    if (Array.isArray(node)) {
+      node.forEach((item, index) => walk(item, `${path}[${index}]`));
+      return;
+    }
+    if (node && typeof node === "object") {
+      for (const [key, value] of Object.entries(node)) {
+        walk(value, path ? `${path}.${key}` : key);
+      }
+    }
+  };
+  walk(clean, "");
+
+  assert.deepEqual(leaks, [],
+    "the secret survived the redaction gate in these fields:\n  "
+      + leaks.join("\n  "));
+  assert.equal(clean.redactionCompleted, true);
+});

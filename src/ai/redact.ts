@@ -475,6 +475,10 @@ export function redactSensitiveData(
       const snapshot: BundledDomSnapshot = { ...bundle.domSnapshots[index] };
       snapshot.prunedHtml = redactHtml(snapshot.prunedHtml, counter, extraPatterns);
       snapshot.pageUrl = redactUrl(snapshot.pageUrl, counter, extraPatterns);
+      // Free text written by this extension, but scrubbed anyway: a future edit
+      // that puts captured data back into it must not silently reopen a hole.
+      snapshot.significanceReason =
+        redactValuePatterns(snapshot.significanceReason, counter, extraPatterns);
       redactedSnapshots.push(snapshot);
     }
 

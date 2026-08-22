@@ -97,11 +97,16 @@ function describeSnapshotSignificance(snapshot: DomSnapshot): string {
   if (snapshot.trigger === "first-load") {
     return "The page as it first loaded, before the tester did anything.";
   }
+  // The URL is deliberately NOT repeated here. It travels in the snapshot's own
+  // pageUrl field, which redaction cleans; duplicating it into free text
+  // created a second copy that the gate did not know about.
   if (snapshot.trigger === "navigation") {
-    return "The page immediately after a full navigation to " + snapshot.pageUrl + ".";
+    return "The page immediately after a full navigation. Its URL is in the "
+      + "pageUrl field for this snapshot.";
   }
   if (snapshot.trigger === "url-change") {
-    return "The page after an in-app route change to " + snapshot.pageUrl + ".";
+    return "The page after an in-app route change. Its URL is in the pageUrl "
+      + "field for this snapshot.";
   }
   if (snapshot.trigger === "console-error") {
     return "The page at the moment a JavaScript error was logged to the console.";
