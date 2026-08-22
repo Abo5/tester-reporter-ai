@@ -53,27 +53,6 @@ export function hasAnyTextContent(element: Element): boolean {
   return text.trim().length > 0;
 }
 
-/**
- * True when the element is inside the viewport right now.
- * Used to decide whether a scroll actually revealed something.
- */
-export function isElementInViewport(element: Element): boolean {
-  const view: Window | null = element.ownerDocument.defaultView;
-  if (view === null) {
-    return false;
-  }
-  const rectangle: DOMRect = element.getBoundingClientRect();
-  if (rectangle.width === 0 && rectangle.height === 0) {
-    return false;
-  }
-  if (rectangle.bottom < 0 || rectangle.top > view.innerHeight) {
-    return false;
-  }
-  if (rectangle.right < 0 || rectangle.left > view.innerWidth) {
-    return false;
-  }
-  return true;
-}
 
 /**
  * True when the element is one a user can meaningfully interact with.

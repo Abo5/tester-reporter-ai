@@ -415,3 +415,16 @@ test("ids are unique across many calls", async () => {
   }
   assert.equal(seen.size, 2000, "id collisions occurred");
 });
+
+// --- Retention policy -------------------------------------------------------
+
+test("retention of 0 days deletes nothing", async () => {
+  const { applyRetentionPolicy } = await import("../dist-test/test-api.mjs");
+  const deleted = await applyRetentionPolicy(0, Date.now());
+  assert.equal(deleted, 0, "0 must mean 'never', which is the default");
+});
+
+test("a negative retention value deletes nothing", async () => {
+  const { applyRetentionPolicy } = await import("../dist-test/test-api.mjs");
+  assert.equal(await applyRetentionPolicy(-5, Date.now()), 0);
+});

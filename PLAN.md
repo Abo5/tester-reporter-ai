@@ -7046,7 +7046,7 @@ be trusted on from memory.
 |---|---|---|
 | `tabCapture` | The only way to get a video stream of the tab being tested. | No — it is the core feature. |
 | `offscreen` | Hosts the `MediaRecorder`. An MV3 service worker cannot run one. | No. |
-| `scripting` | Re-injects the capture scripts into frames that appear after a session starts (a lazily-loaded iframe, for example). | Partly — static `content_scripts` cover most cases, but not late frames. |
+| ~~`scripting`~~ | **Removed in the built extension.** Planned for late-frame injection; no code path ever used it, and a permission nobody calls is a permission nobody should ask for. |
 | `activeTab` | Grants access to the current tab when the tester invokes the extension, without a broad host grant. | No — this is what makes the least-privilege model in 13.3 possible. |
 | `tabs` | Read `url` and `title` for the session record and for `tab-activated` events. | It could be narrowed: `sender.tab` already carries the URL for content-script messages. Worth revisiting — see section 16. |
 | `storage` | Stores the API key, the model choice, the report language and the redaction patterns. | No. |
@@ -7054,7 +7054,7 @@ be trusted on from memory.
 | `sidePanel` | The recording controls have to survive the tester clicking into the page; a popup would close. | No. |
 | `webNavigation` | Detects real navigations and reconstructs the iframe tree (`getAllFrames`). | Partly — navigation could be inferred from content-script re-injection, but the frame tree could not. |
 | `webRequest` | Observational only. Gives status codes for requests the page's own JavaScript never reports, including navigations. | Yes, at a real cost — see 13.4. This is the one to cut first if review pushes back. |
-| `desktopCapture` (**optional**) | v2 screen recording for multi-tab journeys. Requested at runtime, only if the tester turns it on. | Yes — it is optional by design. |
+| ~~`desktopCapture`~~ | **Removed in the built extension.** It returns when v2 actually implements screen recording. |
 
 ### 13.3 The permissions that will scare users at review time — and what we do about them
 
@@ -7751,7 +7751,7 @@ seen to fail is not a validator.
 
 ### 19.2 What is verified and what is not
 
-**Verified by the test suite (80 tests, no browser needed):** the DOM pruning
+**Verified by the test suite (85 tests, no browser needed):** the DOM pruning
 policy including the tab-label acceptance test, the selector chain and its
 ordering, list-row anchoring, element-context capture, the redaction gate across
 all three surfaces, report validation and evidence reconciliation, the fixed
@@ -7764,3 +7764,23 @@ offscreen → `MediaRecorder` works end to end in your Chrome, that an offscreen
 document can or cannot prompt for the microphone, or that a single line of
 `gemini.ts` matches the current API. Work through the Week 0 steps in §18 before
 trusting any of it.
+
+### 19.3 Post-build audit
+
+After the extension built and passed, a deliberate pass looked for gaps between
+what the UI *promises* and what the code *does*. Five were found; all five are
+fixed.
+
+| # | Finding | Why it mattered |
+|---|---|---|
+| 1 | **A double-click recorded three events.** The browser fires `click(detail=1)`, `click(detail=2)`, then `dblclick`. All three were captured. | The generated spec clicked twice and then double-clicked, so it did not replay what the tester did. Fixed in two places: the content script now drops any click with `detail > 1`, and codegen removes the leading click when a `dblclick` on the same element follows within 700 ms. The runtime genuinely cannot know the first click is the start of a double-click, so the second half of the fix has to happen where the future is visible. |
+| 2 | **The session-stop snapshot was never taken.** The trigger existed in the types and in the scheduler's high-priority list, and nothing ever called it. | The final state of the page is usually where the defect is visible — it is among the most valuable single pieces of evidence, and it was being thrown away. The fix required care with ordering: `handleDomSnapshot()` drops anything arriving after the status changes to `processing`, so the content script now **replies** with the snapshot to a `sw/request-final-snapshot` message, which the worker sends while the session is still recording. A fire-and-forget message would have raced the status change and lost. |
+| 3 | **`retentionDays` was a dead setting.** The options page offered "delete recordings older than 7/14/30 days" and stored the number. Nothing ever deleted anything. | A tester who believes their staging recordings are being cleaned up when they are not is worse off than one who was never offered the option. Now implemented in `applyRetentionPolicy()`, run at worker startup and again immediately when the setting changes so the effect is visible. It refuses to run while a recording is in progress. |
+| 4 | **`scripting` and `desktopCapture` were requested and never used.** | Asking for permissions you do not call is exactly what gets an extension scrutinised at review, and it is dishonest to the user reading the install prompt. Both removed. |
+| 5 | **The storage cleanup prompt (§15.2 item 2) was unimplemented**, with its constants sitting unused. | Replaced with something more useful: the side panel now warns about storage *before* the tester presses Record. The service worker already refused to start when space was tight, but finding that out at the moment you were about to begin testing is a bad way to learn it. |
+
+The same pass removed one dead constant (`ALLOWED_REQUEST_HEADERS` — the capture
+path never reads request headers at all, so a list of which ones would be
+allowed described behaviour that does not exist) and five unused helpers. Unused
+code in a security-sensitive extension is code nobody has reviewed and nobody
+has tested.

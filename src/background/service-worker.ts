@@ -7,8 +7,12 @@
 // async callback may not exist yet when the event that needed it fires.
 // =============================================================================
 
-import { installMessageRouter, broadcastStatus, reconcileStuckSessions }
-  from "./message-router";
+import {
+  installMessageRouter,
+  broadcastStatus,
+  reconcileStuckSessions,
+  runRetentionCleanup,
+} from "./message-router";
 import { installNavigationListeners } from "./navigation-listener";
 import { installNetworkListeners } from "./network-listener";
 import { logInfo, logWarning } from "../shared/logger";
@@ -49,12 +53,16 @@ function initialiseServiceWorker(): void {
 
   chrome.runtime.onInstalled.addListener(function onInstalled(): void {
     logInfo("worker", "Extension installed or updated.");
-    void reconcileStuckSessions().then(broadcastStatus);
+    void reconcileStuckSessions()
+      .then(runRetentionCleanup)
+      .then(broadcastStatus);
   });
 
   chrome.runtime.onStartup.addListener(function onStartup(): void {
     logInfo("worker", "Browser started.");
-    void reconcileStuckSessions().then(broadcastStatus);
+    void reconcileStuckSessions()
+      .then(runRetentionCleanup)
+      .then(broadcastStatus);
   });
 
   logInfo("worker", "Service worker initialised.");

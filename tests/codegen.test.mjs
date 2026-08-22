@@ -331,3 +331,69 @@ test("the spec file name is safe for a file system", () => {
   assert.ok(!name.includes("<"));
   assert.ok(!name.includes(" "));
 });
+
+// --- Double-click handling ---------------------------------------------------
+
+test("a double-click does not leave a stray single click in the spec", () => {
+  // The content script already drops the click with detail>1. What reaches
+  // codegen is click, then dblclick, on the same element.
+  const locator = makeLocator({
+    primary: {
+      strategy: "role-and-name", value: "Open contract", role: "button",
+      matchCount: 1, isUniqueAtCaptureTime: true,
+    },
+    accessibleName: "Open contract",
+  });
+
+  const events = [
+    makeEvent(1, "click", { wallClockMs: 5000, locator }),
+    makeEvent(2, "dblclick", { wallClockMs: 5180, locator }),
+  ];
+
+  const kept = api.coalesceEventsForCodegen(events);
+
+  assert.equal(kept.length, 1, "the leading click should have been removed");
+  assert.equal(kept[0].type, "dblclick");
+
+  const spec = api.generatePlaywrightSpec(SESSION, events, []);
+  const clickCalls = (spec.match(/\.click\(\)/g) ?? []).length;
+  assert.equal(clickCalls, 0, "a stray .click() survived alongside .dblclick()");
+  assert.ok(spec.includes(".dblclick()"));
+});
+
+test("an unrelated click before a double-click on ANOTHER element is kept", () => {
+  const first = makeLocator({
+    primary: {
+      strategy: "role-and-name", value: "Search", role: "button",
+      matchCount: 1, isUniqueAtCaptureTime: true,
+    },
+    accessibleName: "Search",
+  });
+  const second = makeLocator({
+    primary: {
+      strategy: "role-and-name", value: "Open contract", role: "button",
+      matchCount: 1, isUniqueAtCaptureTime: true,
+    },
+    accessibleName: "Open contract",
+  });
+
+  const events = [
+    makeEvent(1, "click", { wallClockMs: 5000, locator: first }),
+    makeEvent(2, "dblclick", { wallClockMs: 5180, locator: second }),
+  ];
+
+  const kept = api.coalesceEventsForCodegen(events);
+  assert.equal(kept.length, 2, "a click on a different element must survive");
+});
+
+test("a slow click then double-click on the same element is NOT merged", () => {
+  const locator = makeLocator();
+  const events = [
+    makeEvent(1, "click", { wallClockMs: 5000, locator }),
+    makeEvent(2, "dblclick", { wallClockMs: 9000, locator }),
+  ];
+
+  const kept = api.coalesceEventsForCodegen(events);
+  assert.equal(kept.length, 2,
+    "four seconds apart is two deliberate interactions, not one double-click");
+});

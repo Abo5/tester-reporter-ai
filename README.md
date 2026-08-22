@@ -43,7 +43,7 @@ that, and are covered by the test suite.
 
 ```bash
 npm install
-npm run verify        # typecheck + build + 80 tests
+npm run verify        # typecheck + build + 85 tests
 ```
 
 Then in Chrome, Edge or Brave:
@@ -149,7 +149,7 @@ you can cut.
 | `webRequest` | Status codes for requests the page's own JavaScript never reports. |
 | `webNavigation` | Real navigations, and the iframe tree for `frameLocator()` chains. |
 | `unlimitedStorage` | Videos are 8–70 MB per session. |
-| `tabs`, `scripting`, `activeTab`, `storage`, `sidePanel` | Tab metadata, late-frame injection, settings, controls. |
+| `tabs`, `activeTab`, `storage`, `sidePanel` | Tab metadata, settings, controls. |
 
 **`webRequest` is the one to cut first** if the listing needs to look less
 alarming. Dropping it costs status codes for navigations and for requests the
@@ -163,6 +163,10 @@ reports.
 the install prompt narrow. It is more code, it makes the first run worse, and
 whether a static `content_scripts` entry forces a broad prompt regardless needs
 to be tested rather than assumed — that is risk **R4** in PLAN.md section 16.
+
+**Nothing is requested that is not used.** `scripting` and `desktopCapture` were
+in an earlier manifest and were removed once a review confirmed no code path
+called either. `desktopCapture` comes back when v2 implements screen recording.
 
 **`chrome.debugger` is deliberately NOT used.** It would give full response
 bodies and browser-generated console messages (CSP violations, mixed content,
@@ -212,7 +216,7 @@ PLAN.md.
 
 ## Testing
 
-80 tests, no browser required. jsdom is a test-only dependency.
+85 tests, no browser required. jsdom is a test-only dependency.
 
 The load-bearing one is in [`tests/prune-dom.test.mjs`](tests/prune-dom.test.mjs):
 given a catalog page whose tabs read *"Contract Renewal & Continuation"* and

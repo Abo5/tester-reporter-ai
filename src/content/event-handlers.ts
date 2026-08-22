@@ -146,6 +146,21 @@ export function takeSnapshotIfSignificant(
 }
 
 /**
+ * Builds the final page snapshot, bypassing the throttle.
+ *
+ * WHY it bypasses the throttle and does NOT send the snapshot itself: the final
+ * state of the page is where the defect is usually visible, so it is never
+ * "not significant enough"; and it is returned to the service worker as a reply
+ * so it can be stored while the session is still accepting data.
+ */
+export function buildFinalSnapshot(): DomSnapshot | null {
+  if (!isRecordingActive) {
+    return null;
+  }
+  return maybeTakeSnapshot("session-stop", activeSessionId, -1);
+}
+
+/**
  * Captures the element's context and returns its id.
  */
 function captureAndSendElementContext(element: Element): string {
@@ -382,6 +397,16 @@ export function handleClick(nativeEvent: MouseEvent): void {
   if (!isRecordingActive) {
     return;
   }
+
+  // A double-click fires click(detail=1), click(detail=2), then dblclick.
+  // Recording the second click would put a duplicate step in the spec, so we
+  // drop any click that the browser has already told us is part of a multi-click
+  // sequence. The FIRST click is genuinely indistinguishable at this moment, so
+  // codegen removes it afterwards when it sees the dblclick that followed.
+  if (nativeEvent.detail > 1) {
+    return;
+  }
+
   const target: Element | null = getRealEventTarget(nativeEvent);
   if (target === null) {
     return;

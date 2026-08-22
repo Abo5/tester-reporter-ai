@@ -81,13 +81,3 @@ export function recordedDurationForState(state: ActiveRecordingState): number {
   return videoOffsetForState(state, Date.now());
 }
 
-/**
- * True when the state says we should be accepting captured events right now.
- * Paused sessions deliberately drop events rather than buffering them.
- */
-export function isAcceptingEvents(state: ActiveRecordingState | null): boolean {
-  if (state === null) {
-    return false;
-  }
-  return state.status === "recording";
-}

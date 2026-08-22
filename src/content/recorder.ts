@@ -9,7 +9,11 @@
 // =============================================================================
 
 import type { NetworkEntry, ConsoleEntry, ConsoleLevel } from "../shared/types";
-import type { ContentHandshakeReply, FrameInventoryEntry } from "../shared/messages";
+import type {
+  ContentHandshakeReply,
+  FrameInventoryEntry,
+  FinalSnapshotReply,
+} from "../shared/messages";
 import {
   asExtensionMessage,
   sendMessageIgnoringNoReceiver,
@@ -34,6 +38,7 @@ import {
   handleUrlChange,
   flushPendingInput,
   takeSnapshotIfSignificant,
+  buildFinalSnapshot,
 } from "./event-handlers";
 import { resetSnapshotScheduler } from "./snapshot-scheduler";
 import { logWarning } from "../shared/logger";
@@ -263,13 +268,27 @@ async function performHandshake(): Promise<void> {
 }
 
 /**
- * Handles messages the service worker broadcasts to every context.
- * The content script only cares about being told to start or stop.
+ * Handles messages addressed to this content script.
+ *
+ * Returns true only for the final-snapshot request, because that is the one
+ * message that needs a reply and Chrome closes the channel otherwise.
  */
-function handleRuntimeMessage(rawMessage: unknown): void {
+function handleRuntimeMessage(
+  rawMessage: unknown,
+  _sender: chrome.runtime.MessageSender,
+  sendResponse: (response?: unknown) => void,
+): boolean {
   const message = asExtensionMessage(rawMessage);
   if (message === null) {
-    return;
+    return false;
+  }
+
+  if (message.kind === "sw/request-final-snapshot") {
+    // Flush any half-typed value first: it is part of the final state too.
+    flushPendingInput();
+    const reply: FinalSnapshotReply = { snapshot: buildFinalSnapshot() };
+    sendResponse(reply);
+    return true;
   }
 
   if (message.kind === "sw/status") {
@@ -282,7 +301,7 @@ function handleRuntimeMessage(rawMessage: unknown): void {
       resetSnapshotScheduler();
       takeSnapshotIfSignificant("first-load", -1);
       reportFrameInventory();
-      return;
+      return false;
     }
 
     // Pausing keeps the listeners installed but stops emitting, which the
@@ -292,6 +311,8 @@ function handleRuntimeMessage(rawMessage: unknown): void {
       setRecordingActive(false, "");
     }
   }
+
+  return false;
 }
 
 /**

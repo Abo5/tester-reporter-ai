@@ -12,7 +12,9 @@ import type { SessionStatus, RecordingSession } from "../shared/types";
 import { asExtensionMessage, sendMessageIgnoringNoReceiver } from "../shared/messages";
 import { listSessions } from "../storage/sessions";
 import { readSettings, writeSettings } from "../storage/settings";
-import { formatVideoTimestamp, formatDuration } from "../shared/time";
+import { readQuotaStatus, type QuotaStatus } from "../storage/media";
+import { formatVideoTimestamp, formatDuration, formatBytes } from "../shared/time";
+import { CLEANUP_PROMPT_AFTER_BYTES } from "../shared/constants";
 import { logWarning } from "../shared/logger";
 
 /** Every element we touch, looked up once so a typo fails immediately. */
@@ -369,6 +371,44 @@ function installHandlers(): void {
   window.setInterval(tickTimer, 500);
 }
 
+/**
+ * Warns about storage BEFORE the tester presses Record.
+ *
+ * WHY proactively and not just at Record time: the service worker already
+ * refuses to start when space is tight, but discovering that at the moment you
+ * were about to begin testing is a bad way to find out. This turns a hard
+ * refusal into advance notice.
+ */
+async function renderStorageWarning(): Promise<void> {
+  let quota: QuotaStatus;
+  try {
+    quota = await readQuotaStatus();
+  } catch (quotaError: unknown) {
+    return;   // Storage estimates are advisory; never block the panel on them.
+  }
+
+  if (quota.quotaBytes === 0) {
+    return;   // The browser does not report usage. Nothing useful to say.
+  }
+
+  if (!quota.canStartRecording) {
+    elements.errorBox.hidden = false;
+    elements.errorBox.textContent =
+      "Not enough free storage to record safely (only "
+      + formatBytes(quota.freeBytes) + " left). Delete an old session below, or "
+      + "free up disk space.";
+    return;
+  }
+
+  if (quota.usageBytes > CLEANUP_PROMPT_AFTER_BYTES) {
+    elements.errorBox.hidden = false;
+    elements.errorBox.textContent =
+      "This extension is using " + formatBytes(quota.usageBytes)
+      + " of storage, almost all of it video. Open a session below and use "
+      + "\u201cDelete video, keep report\u201d on the ones you have finished with.";
+  }
+}
+
 /** Loads settings, asks for the current status, and renders. */
 async function initialisePanel(): Promise<void> {
   installHandlers();
@@ -379,6 +419,7 @@ async function initialisePanel(): Promise<void> {
 
   renderStatus("idle", 0, 0, 0, 0, "");
   await renderSessionList();
+  await renderStorageWarning();
   await sendMessageIgnoringNoReceiver({ kind: "ui/get-status" });
 }
 

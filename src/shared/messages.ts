@@ -148,6 +148,22 @@ export interface OffscreenErrorMessage {
   reason: string;
 }
 
+/**
+ * Asks the content script for one last snapshot before recording stops.
+ *
+ * WHY it is a request/REPLY and not a broadcast: the final snapshot has to be
+ * stored while the session is still accepting data. A fire-and-forget message
+ * would race the status change to "processing" and be dropped.
+ */
+export interface RequestFinalSnapshotMessage {
+  kind: "sw/request-final-snapshot";
+}
+
+/** The content script's reply. `snapshot` is null when it had nothing to send. */
+export interface FinalSnapshotReply {
+  snapshot: DomSnapshot | null;
+}
+
 // --- Sent by the service worker -> side panel --------------------------------
 
 export interface StatusUpdateMessage {
@@ -184,6 +200,7 @@ export type ExtensionMessage =
   | OffscreenReadyMessage
   | OffscreenFinishedMessage
   | OffscreenErrorMessage
+  | RequestFinalSnapshotMessage
   | StatusUpdateMessage;
 
 /**

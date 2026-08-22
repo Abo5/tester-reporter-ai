@@ -20,6 +20,7 @@ import {
 } from "../storage/settings";
 import { readQuotaStatus, type QuotaStatus } from "../storage/media";
 import { clearAllData } from "../storage/db";
+import { applyRetentionPolicy } from "../storage/sessions";
 import { compileCustomPatterns } from "../ai/redact";
 import { SUPPORTED_MODELS } from "../shared/constants";
 import { formatBytes } from "../shared/time";
@@ -287,8 +288,28 @@ function installRemainingHandlers(): void {
 
   retentionSelect.addEventListener("change", function onRetention(): void {
     const days: number = Number.parseInt(retentionSelect.value, 10);
-    void writeSettings({ retentionDays: Number.isFinite(days) ? days : 0 })
-      .then(flashSaved);
+    const retentionDays: number = Number.isFinite(days) ? days : 0;
+
+    void writeSettings({ retentionDays: retentionDays })
+      .then(async function afterWrite(): Promise<void> {
+        flashSaved();
+        if (retentionDays <= 0) {
+          storageLine.textContent =
+            "Automatic deletion is off. Nothing will be removed without you "
+            + "choosing it.";
+          return;
+        }
+        // Apply it now rather than only at the next browser start, so the
+        // tester can see that the setting does something.
+        const deletedCount: number =
+          await applyRetentionPolicy(retentionDays, Date.now());
+        if (deletedCount > 0) {
+          storageLine.textContent =
+            "Deleted " + String(deletedCount) + " session(s) older than "
+            + String(retentionDays) + " days.";
+        }
+        await renderStorage();
+      });
   });
 
   clearDataButton.addEventListener("click", function onClear(): void {

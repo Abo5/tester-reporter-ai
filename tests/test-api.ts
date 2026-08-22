@@ -45,7 +45,8 @@ export { SYSTEM_INSTRUCTION, buildEvidenceText, buildLanguageInstruction }
 
 export { generatePlaywrightSpec, buildSpecFileName }
   from "../src/codegen/generate-spec";
-export { coalesceEventsForCodegen } from "../src/codegen/coalesce-events";
+export { coalesceEventsForCodegen, nextEventAfter }
+  from "../src/codegen/coalesce-events";
 export {
   locatorToPlaywrightExpression,
   buildLocatorComments,
@@ -55,6 +56,7 @@ export {
 export { buildClosingAssertions, findFailureAfterEvent }
   from "../src/codegen/assertions";
 
+export { applyRetentionPolicy } from "../src/storage/sessions";
 export {
   formatVideoTimestamp,
   formatDuration,

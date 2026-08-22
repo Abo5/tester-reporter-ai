@@ -7,7 +7,6 @@
   "permissions": [
     "tabCapture",
     "offscreen",
-    "scripting",
     "activeTab",
     "tabs",
     "storage",
@@ -15,9 +14,6 @@
     "sidePanel",
     "webNavigation",
     "webRequest"
-  ],
-  "optional_permissions": [
-    "desktopCapture"
   ],
   "host_permissions": [
     "https://generativelanguage.googleapis.com/*",

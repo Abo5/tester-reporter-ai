@@ -132,29 +132,6 @@ export async function putRecord<T>(storeName: string, record: T): Promise<void> 
   await promisifyRequest(store.put(record as unknown as never));
 }
 
-/**
- * Puts many records into one store inside a single transaction.
- * WHY batched: writing 400 events one transaction at a time is measurably slow.
- */
-export async function putRecords<T>(storeName: string, records: T[]): Promise<void> {
-  if (records.length === 0) {
-    return;
-  }
-  const database: IDBDatabase = await openDatabase();
-  const transaction: IDBTransaction = database.transaction(storeName, "readwrite");
-  const store: IDBObjectStore = transaction.objectStore(storeName);
-  for (let index = 0; index < records.length; index = index + 1) {
-    store.put(records[index] as unknown as never);
-  }
-  await new Promise<void>(function executor(resolve, reject): void {
-    transaction.oncomplete = function onComplete(): void {
-      resolve();
-    };
-    transaction.onerror = function onError(): void {
-      reject(transaction.error ?? new Error("A batched write failed."));
-    };
-  });
-}
 
 /**
  * Reads one record by primary key, or null when it does not exist.
@@ -201,20 +178,6 @@ export async function readAllForSession<T>(
   );
 }
 
-/**
- * Counts the records for one session in one store, without loading them.
- * WHY: the review page shows counts long before it needs the data itself.
- */
-export async function countForSession(
-  storeName: string,
-  sessionId: string,
-): Promise<number> {
-  const database: IDBDatabase = await openDatabase();
-  const transaction: IDBTransaction = database.transaction(storeName, "readonly");
-  const store: IDBObjectStore = transaction.objectStore(storeName);
-  const index: IDBIndex = store.index("bySession");
-  return await promisifyRequest<number>(index.count(IDBKeyRange.only(sessionId)));
-}
 
 /**
  * Deletes one record by primary key.

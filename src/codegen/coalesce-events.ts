@@ -32,6 +32,18 @@ function isDuplicateNavigation(previous: RecordedEvent, current: RecordedEvent):
 }
 
 /**
+ * True when two events targeted what looks like the same element.
+ * Compared by primary locator value, which is what codegen will emit anyway.
+ */
+function isSameElement(left: RecordedEvent, right: RecordedEvent): boolean {
+  if (left.locator === null || right.locator === null) {
+    return false;
+  }
+  return left.locator.primary.value === right.locator.primary.value
+    && left.locator.primary.strategy === right.locator.primary.strategy;
+}
+
+/**
  * Removes events that add nothing to a replayable script.
  *
  * The rules, and why each one exists:
@@ -57,6 +69,15 @@ export function coalesceEventsForCodegen(events: RecordedEvent[]): RecordedEvent
 
       if (isDuplicateNavigation(previous, current)) {
         continue;
+      }
+
+      // A double-click is preceded by a single click on the same element that
+      // the content script could not know was the start of a double-click.
+      // Drop it here, where we can see what came next.
+      if (current.type === "dblclick" && previous.type === "click"
+          && isSameElement(previous, current)
+          && current.wallClockMs - previous.wallClockMs < 700) {
+        kept.pop();
       }
 
       if (previous.type === "scroll" && current.type === "scroll") {

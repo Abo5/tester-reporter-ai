@@ -5,7 +5,6 @@
 
 import type {
   RecordingSession,
-  SessionStatus,
   ReportLanguage,
   MediaRecordInfo,
 } from "../shared/types";
@@ -131,16 +130,6 @@ export async function updateSession(
   return updated;
 }
 
-/**
- * Sets the session status. A named helper because it happens from four places
- * and the status strings must not be typed out by hand each time.
- */
-export async function setSessionStatus(
-  sessionId: string,
-  status: SessionStatus,
-): Promise<void> {
-  await updateSession(sessionId, { status: status });
-}
 
 /**
  * Records one event's worth of progress in a SINGLE read-modify-write.
@@ -181,4 +170,45 @@ export async function recordEventProgress(
  */
 export async function deleteSession(sessionId: string): Promise<void> {
   await deleteEverythingForSession(sessionId);
+}
+
+/**
+ * Deletes sessions older than the retention setting.
+ *
+ * WHY it exists: the options page offers "delete recordings older than N days".
+ * Storing that number without ever acting on it is a broken promise, and a
+ * tester who believes their staging recordings are being cleaned up when they
+ * are not is worse off than one who was never offered the option.
+ *
+ * Returns the number of sessions deleted, so the UI can say what happened.
+ * A retentionDays of 0 means "never", and is the default.
+ */
+export async function applyRetentionPolicy(
+  retentionDays: number,
+  nowMs: number,
+): Promise<number> {
+  if (retentionDays <= 0) {
+    return 0;
+  }
+
+  const cutoffMs: number = nowMs - retentionDays * 24 * 60 * 60 * 1000;
+  const sessions: RecordingSession[] = await listSessions();
+  let deletedCount: number = 0;
+
+  for (let index = 0; index < sessions.length; index = index + 1) {
+    const session: RecordingSession = sessions[index];
+
+    // Never delete something still being recorded, whatever its start time.
+    if (session.status === "recording" || session.status === "paused"
+        || session.status === "processing") {
+      continue;
+    }
+
+    if (session.startedAtMs < cutoffMs) {
+      await deleteSession(session.id);
+      deletedCount = deletedCount + 1;
+    }
+  }
+
+  return deletedCount;
 }

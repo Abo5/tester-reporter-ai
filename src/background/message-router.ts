@@ -12,6 +12,7 @@ import type {
   ExtensionMessage,
   ContentHandshakeReply,
   StatusUpdateMessage,
+  FinalSnapshotReply,
 } from "../shared/messages";
 import { asExtensionMessage, sendMessageIgnoringNoReceiver } from "../shared/messages";
 import type {
@@ -45,6 +46,7 @@ import {
   updateSession,
   getSession,
   listSessions,
+  applyRetentionPolicy,
   recordEventProgress,
 } from "../storage/sessions";
 import { appendEvent } from "../storage/events";
@@ -325,6 +327,50 @@ async function handleResumeRecording(): Promise<void> {
 }
 
 /**
+ * Asks the tab for one last page snapshot and stores it.
+ *
+ * ORDERING MATTERS: this runs while the session is still "recording", because
+ * handleDomSnapshot() drops anything that arrives after the status changes. The
+ * content script REPLIES with the snapshot rather than sending it separately,
+ * so there is no race to lose.
+ */
+async function captureFinalSnapshot(state: ActiveRecordingState): Promise<void> {
+  let reply: unknown;
+  try {
+    reply = await chrome.tabs.sendMessage(state.tabId, {
+      kind: "sw/request-final-snapshot",
+    });
+  } catch (sendError: unknown) {
+    return;   // The tab is gone or has no content script. Not an error.
+  }
+
+  if (typeof reply !== "object" || reply === null) {
+    return;
+  }
+  const typedReply = reply as FinalSnapshotReply;
+  if (typedReply.snapshot === null || typedReply.snapshot === undefined) {
+    return;
+  }
+
+  const stamped: DomSnapshot = { ...typedReply.snapshot };
+  stamped.sessionId = state.sessionId;
+  stamped.videoOffsetMs = videoOffsetForState(state, stamped.wallClockMs);
+  stamped.eventIndex = state.eventCount;
+
+  try {
+    await putDomSnapshot(stamped);
+    const session = await getSession(state.sessionId);
+    if (session !== null) {
+      await updateSession(state.sessionId, {
+        domSnapshotCount: session.domSnapshotCount + 1,
+      });
+    }
+  } catch (storeError: unknown) {
+    logWarning("router", "Could not store the final snapshot.", storeError);
+  }
+}
+
+/**
  * Stops capture and hands over to the offscreen document to finalise the file.
  *
  * The session is NOT completed here: it completes when offscreen/finished
@@ -335,6 +381,12 @@ async function handleStopRecording(): Promise<void> {
   const state: ActiveRecordingState | null = await readActiveState();
   if (state === null) {
     return;
+  }
+
+  // The final state of the page is where the defect is usually visible, so
+  // grab it BEFORE anything changes the session status.
+  if (state.status === "recording") {
+    await captureFinalSnapshot(state);
   }
 
   // Fold in a trailing pause so the recorded duration is right either way.
@@ -435,6 +487,36 @@ export async function reconcileStuckSessions(): Promise<void> {
             : session.media.failureReason,
       },
     });
+  }
+}
+
+/**
+ * Deletes recordings older than the tester's retention setting.
+ *
+ * Runs at startup rather than on a timer: a QA tester's browser is restarted
+ * often enough, and a background alarm firing mid-session to delete things is
+ * exactly the kind of surprise this product should not have.
+ */
+export async function runRetentionCleanup(): Promise<void> {
+  const settings = await readSettings();
+  if (settings.retentionDays <= 0) {
+    return;
+  }
+
+  const activeState: ActiveRecordingState | null = await readActiveState();
+  if (activeState !== null) {
+    return;   // Never clean up while a recording is in progress.
+  }
+
+  try {
+    const deletedCount: number =
+      await applyRetentionPolicy(settings.retentionDays, Date.now());
+    if (deletedCount > 0) {
+      logInfo("router", "Retention removed " + String(deletedCount)
+        + " session(s) older than " + String(settings.retentionDays) + " days.");
+    }
+  } catch (cleanupError: unknown) {
+    logWarning("router", "Retention cleanup failed.", cleanupError);
   }
 }
 

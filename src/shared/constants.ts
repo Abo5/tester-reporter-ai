@@ -155,13 +155,10 @@ export const ASSUMED_SUPPORTED_VIDEO_MIME_TYPES: readonly string[] = [
 export const MAX_BODY_EXCERPT_CHARACTERS: number = 2000;
 export const MAX_STACK_EXCERPT_CHARACTERS: number = 800;
 
-/** Request headers we are willing to store at all. */
-export const ALLOWED_REQUEST_HEADERS: readonly string[] = [
-  "content-type",
-  "accept",
-  "accept-language",
-  "x-requested-with",
-];
+// NOTE: there is deliberately no request-header allow-list here. The
+// MAIN-world fetch/XHR patch does not read request headers at all, so
+// NetworkEntry.requestHeaders is always empty. Redaction still strips
+// Authorization and Cookie if a future capture path ever populates it.
 
 // -----------------------------------------------------------------------------
 // Gemini request handling
@@ -188,7 +185,6 @@ export const ESTIMATED_TOKENS_PER_KEY_FRAME: number = 300;
 
 export const MINIMUM_FREE_BYTES_TO_START: number = 500 * 1024 * 1024;
 export const DEFAULT_RETENTION_DAYS: number = 0;
-export const CLEANUP_PROMPT_AFTER_SESSIONS: number = 5;
 export const CLEANUP_PROMPT_AFTER_BYTES: number = 300 * 1024 * 1024;
 
 // -----------------------------------------------------------------------------
