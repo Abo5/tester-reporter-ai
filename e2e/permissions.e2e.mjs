@@ -21,6 +21,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import {
   launchWithExtension, openExtensionPage, callExtension, readStore, waitFor,
+  sendBrowserShortcut,
   readRecordingState,
   grantOriginLikeATester,
 } from "./harness.mjs";
@@ -154,4 +155,78 @@ test("revoking the site unregisters the content scripts again", async () => {
     () => new Promise((resolve) => chrome.permissions.getAll(resolve)));
   assert.ok(!(permissions.origins || []).includes(fixtureOriginPattern()),
     "the origin is still granted after revoking it");
+});
+
+test("the ungranted fallback survives a full page navigation", async () => {
+  // THE BUG THIS PINS. Recording on a site with no grant injects the content
+  // scripts under activeTab, and that injection belongs to one document. The
+  // first real session run against a live site recorded ten interactions on the
+  // login page and then, after the first navigation, seven bare navigations and
+  // not a single click. The generated script was a list of page.goto() calls.
+  //
+  // Nothing in the suite caught it, because every other test records on one
+  // page. This one navigates in the middle, with nothing granted.
+  const permissions = await extensionPage.evaluate(
+    () => new Promise((resolve) => chrome.permissions.getAll(resolve)));
+  assert.deepEqual(permissions.origins, [
+    "https://generativelanguage.googleapis.com/*",
+  ], "this test is only meaningful with nothing granted");
+
+  const page = await browser.context.newPage();
+  await page.goto(`${server.url}/catalog.html`, { waitUntil: "load" });
+  await page.bringToFront();
+
+  const tabId = await browser.serviceWorker.evaluate(async () => {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    return tabs[0]?.id ?? -1;
+  });
+
+  // Started with the KEYBOARD SHORTCUT, not a message. activeTab - the whole
+  // basis of the ungranted fallback - is only granted by a real invocation, so
+  // a test that starts recording by posting a message is testing a path no
+  // tester can reach.
+  const delivered = await sendBrowserShortcut("ctrl+shift+e");
+  assert.ok(delivered, "could not deliver the shortcut; is xdotool installed?");
+  await waitFor("session to reach 'recording'", async () => {
+    const state = await readRecordingState(browser.serviceWorker);
+    return state?.status === "recording";
+  });
+
+  await page.bringToFront();
+  await page.click('[data-testid="tab-renewal"]');
+  await page.waitForTimeout(400);
+
+  // A REAL navigation, the kind that destroys an injected script.
+  await page.goto(`${server.url}/bilingual.html`, { waitUntil: "load" });
+  await page.waitForTimeout(1200);
+  await page.bringToFront();
+
+  // An interaction AFTER the navigation. This is the one that used to vanish.
+  const afterNav = page.locator("input, button, a").first();
+  await afterNav.click({ timeout: 5000 }).catch(() => {});
+  await page.waitForTimeout(800);
+
+  await sendBrowserShortcut("ctrl+shift+e");
+  await waitFor("session to leave 'processing'", async () => {
+    const sessions = await readStore(extensionPage, "sessions");
+    const session = sessions.find((s) => s.status !== "processing"
+      && s.status !== "recording");
+    return session || null;
+  }, 40000);
+
+  const events = await readStore(extensionPage, "events");
+  const afterNavigation = events.filter((event) =>
+    event.pageUrl.includes("bilingual.html")
+    && event.type !== "navigate" && event.type !== "reload");
+
+  const shape = {};
+  for (const event of events) { shape[event.type] = (shape[event.type] || 0) + 1; }
+  console.log(`  events: ${JSON.stringify(shape)}`);
+  console.log(`  interactions after the navigation: ${afterNavigation.length}`);
+
+  assert.ok(afterNavigation.length >= 1,
+    "an ungranted session stopped capturing interactions after navigating; "
+    + "the activeTab injection was not restored");
+
+  await page.close();
 });

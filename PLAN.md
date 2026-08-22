@@ -129,7 +129,7 @@ call to Gemini.
 - Record / Pause / Resume / Stop from a side panel.
 - Interaction capture: clicks, typing, selects, checkboxes/radios, navigation, tab
   changes, reloads, URL changes, interaction-relevant scrolls, state-changing hovers,
-  Enter/Tab/Escape.
+  Enter/Tab/Escape, the standalone navigation keys, and any Ctrl / Alt / Meta combination.
 - Page code capture: pruned whole-page DOM snapshots + bounded per-element context with
   computed styles, ARIA state, and `lang`/`dir`.
 - Tab video + microphone audio in one file, surviving pause/resume.
@@ -7834,6 +7834,46 @@ already started — the tester learned the price once it was already paid. Now
 evidence, including a 300-second video."* The threshold is deliberately low enough that
 any session carrying a video crosses it, because the video is where the cost is. A dialog
 on every generation is a dialog people learn to dismiss unread, which is worse than none.
+
+---
+
+### 19.p Three things the first real session found
+
+The extension was installed on a real desktop and used against a live site by
+the person who commissioned it. One session found more than the previous
+adversarial review had, which is the usual result and worth saying plainly.
+
+**1. The ungranted fallback died at the first navigation.** `executeScript`
+injects into a DOCUMENT, not a tab. The session recorded ten interactions on the
+login page and then seven bare navigations with not one click, and the generated
+script was a list of `page.goto()` calls that replays and proves nothing. The
+README described the cost of this path as "requests made before Record", which
+was an understatement of a much larger hole. Fixed by re-injecting on
+`webNavigation.onCommitted`; `e2e/permissions.e2e.mjs` now navigates mid-session
+with nothing granted, which is the shape no other test had.
+
+**2. Only three keys were ever recorded.** The tester pressed Ctrl+F to find a
+record they had just created and nothing was captured at all — the whole search
+was invisible to the report. `RECORDED_KEYS` now covers the standalone keys, and
+any Ctrl / Alt / Meta combination is recorded as a command. The extension's own
+shortcut is excluded, or every session would end with a phantom step.
+
+A browser-level shortcut is recorded but flagged in the script: Playwright sends
+Ctrl+F to the page, and the find bar is not part of the page, so the line passes
+without reproducing anything. Saying so is the difference between evidence and a
+false claim of coverage.
+
+**3. The script was unwatchable.** A three-minute session replayed in nine
+seconds. Correct, and useless to the person who recorded it — they run it to
+*see* the bug, and the row they care about is on screen for 40 milliseconds. The
+generated spec now carries a `pause()` helper between steps, three seconds by
+default, `STEP_PAUSE_MS=0` in CI.
+
+That last one required overturning a test which asserted the spec NEVER contains
+a sleep. The rule was right for the wrong reason: what makes a sleep an
+anti-pattern is *synchronising* on it, and every step still derives its own wait.
+The test now enforces the real rule — exactly one sleep, in the named helper,
+never a literal in a step.
 
 ---
 

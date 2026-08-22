@@ -19,6 +19,7 @@ import {
 import { coalesceEventsForCodegen, nextEventAfter } from "./coalesce-events";
 import { buildFailureComment, buildClosingAssertions } from "./assertions";
 import { formatVideoTimestamp } from "../shared/time";
+import { DEFAULT_STEP_PAUSE_MS } from "../shared/constants";
 
 /**
  * Escapes a recorded URL for waitForURL, which treats a string as a GLOB.
@@ -125,6 +126,10 @@ function generateStatementsForEvent(
   } else if (event.type === "uncheck") {
     lines.push(INDENT + "await " + locatorExpression + ".uncheck();");
   } else if (event.type === "press-key") {
+    const browserLevelNote: string = describeBrowserLevelShortcut(event.value);
+    if (browserLevelNote !== "") {
+      lines.push(INDENT + "// " + browserLevelNote);
+    }
     if (event.locator === null) {
       lines.push(INDENT + "await page.keyboard.press(" + quote(event.value) + ");");
     } else {
@@ -194,6 +199,48 @@ function buildHeaderLines(
   return lines;
 }
 
+
+/**
+ * The lines that let a person WATCH the replay.
+ *
+ * A script that replays a three-minute session in nine seconds is correct and
+ * useless to look at: the tester who recorded it cannot tell whether the click
+ * landed on the right row, because the row was on screen for 40 milliseconds.
+ * A pause between steps turns the script into a demonstration.
+ *
+ * WHY a helper reading an environment variable rather than a literal
+ * waitForTimeout after every line:
+ *   - the same file has to be watchable on a desk AND fast in CI, and a
+ *     hard-coded three-second sleep in fifty steps is two and a half minutes of
+ *     nothing on every build;
+ *   - one constant is one place to change it;
+ *   - and a fixed sleep is an anti-pattern to a Playwright reader, so being
+ *     explicit that it is a viewing aid, not a synchronisation device, stops
+ *     the next person deleting it as a mistake.
+ *
+ * It defaults to three seconds because the person who most wants to run this is
+ * the tester who just recorded it, and they want to see it. Set STEP_PAUSE_MS=0
+ * in CI.
+ */
+export function buildPaceHelperLines(): string[] {
+  const lines: string[] = [];
+
+  lines.push(INDENT + "// Slow enough to watch. This is a VIEWING AID, not a");
+  lines.push(INDENT + "// synchronisation device - every step above already");
+  lines.push(INDENT + "// waits properly on its own. Set STEP_PAUSE_MS=0 to run");
+  lines.push(INDENT + "// at full speed in CI.");
+  lines.push(INDENT + "const stepPauseMs = Number(process.env.STEP_PAUSE_MS ?? "
+    + String(DEFAULT_STEP_PAUSE_MS) + ");");
+  lines.push(INDENT + "const pause = async (): Promise<void> => {");
+  lines.push(INDENT + "  if (stepPauseMs > 0) {");
+  lines.push(INDENT + "    await page.waitForTimeout(stepPauseMs);");
+  lines.push(INDENT + "  }");
+  lines.push(INDENT + "};");
+  lines.push("");
+
+  return lines;
+}
+
 /**
  * Generates the whole .spec.ts file.
  *
@@ -212,6 +259,14 @@ export function generatePlaywrightSpec(
   const testTitle: string =
     session.name.trim() === "" ? "Recorded QA session" : session.name.trim();
   lines.push("test(" + quote(testTitle) + ", async ({ page }) => {");
+  lines.push("");
+
+  // The pause helper. See buildPaceHelperLines for why it is a helper and not a
+  // waitForTimeout after every statement.
+  const paceLines: string[] = buildPaceHelperLines();
+  for (let index = 0; index < paceLines.length; index = index + 1) {
+    lines.push(paceLines[index]);
+  }
 
   // The first statement is always an explicit goto, so the spec is runnable
   // from a clean browser even when the recording began mid-journey.
@@ -224,6 +279,7 @@ export function generatePlaywrightSpec(
     lines.push("");
     lines.push(INDENT + "// [00:00] step 1");
     lines.push(INDENT + "await page.goto(" + quote(startUrl) + ");");
+    lines.push(INDENT + "await pause();");
   }
 
   let stepNumber: number = startUrl === "" ? 1 : 2;
@@ -268,6 +324,7 @@ export function generatePlaywrightSpec(
     for (let lineIndex = 0; lineIndex < statementLines.length; lineIndex = lineIndex + 1) {
       lines.push(statementLines[lineIndex]);
     }
+    lines.push(INDENT + "await pause();");
     stepNumber = stepNumber + 1;
   }
 
@@ -309,4 +366,39 @@ export function buildSpecFileName(session: RecordingSession): string {
   }
 
   return safeName + ".spec.ts";
+}
+
+/**
+ * A warning for shortcuts the browser handles itself, or "" for the rest.
+ *
+ * WHY this is worth a line of generated comment: a tester pressed Ctrl+F to
+ * find a record they had just created. Recording it is right - the report
+ * should say how they found the row - but replaying it is not. Playwright sends
+ * the key to the PAGE, and the browser's find bar is not part of the page, so
+ * the line runs, passes, and does nothing. Without the comment the next person
+ * to read the spec would believe the search was covered.
+ */
+export function describeBrowserLevelShortcut(keyCombination: string): string {
+  const browserShortcuts: Record<string, string> = {
+    "Control+f": "the browser's find bar",
+    "Control+F": "the browser's find bar",
+    "Control+p": "the browser's print dialog",
+    "Control+t": "a new browser tab",
+    "Control+w": "closing the browser tab",
+    "Control+l": "the address bar",
+    "Control+d": "the bookmark dialog",
+    "F5": "a browser reload",
+    "F12": "DevTools",
+  };
+
+  const description: string | undefined = browserShortcuts[keyCombination];
+  if (description === undefined) {
+    return "";
+  }
+
+  return "The tester pressed " + keyCombination + ", which opens "
+    + description + " - browser chrome, not part of the page. Playwright sends "
+    + "this key to the page, so this line will pass without reproducing what "
+    + "the tester did. Replace it with the equivalent page action if the "
+    + "journey depends on it.";
 }

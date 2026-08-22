@@ -163,3 +163,61 @@ test("a full recording session captures events, page code and a script",
 
     await page.close();
   });
+
+test("keyboard commands are captured, Ctrl+F included", async () => {
+  // THE REPORTED BUG. A tester pressed Ctrl+F to find the record they had just
+  // created and it was recorded nowhere: the handler listened for Enter, Tab
+  // and Escape and dropped everything else. The search that found the row was
+  // invisible to the report.
+  const page = await browser.context.newPage();
+  await page.goto(`${server.url}/catalog.html`, { waitUntil: "load" });
+  await page.bringToFront();
+
+  const tabId = await browser.serviceWorker.evaluate(async () => {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    return tabs[0]?.id ?? -1;
+  });
+
+  await callExtension(extensionPage, {
+    kind: "ui/start-recording", tabId, captureMicrophone: false,
+  });
+  await waitFor("session to reach 'recording'", async () => {
+    const state = await readRecordingState(browser.serviceWorker);
+    return state?.status === "recording";
+  });
+
+  await page.bringToFront();
+  await page.click("#tenant");
+
+  // The page sees these even though the browser also acts on some of them.
+  await page.keyboard.press("Control+f");
+  await page.waitForTimeout(300);
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(300);
+  await page.keyboard.press("Control+Shift+ArrowRight");
+  await page.waitForTimeout(300);
+
+  await callExtension(extensionPage, { kind: "ui/stop-recording" });
+  await waitFor("session to leave 'processing'", async () => {
+    const sessions = await readStore(extensionPage, "sessions");
+    const found = sessions.find((s) => s.status !== "processing"
+      && s.status !== "recording");
+    return found || null;
+  }, 40000);
+
+  const events = await readStore(extensionPage, "events");
+  const keyPresses = events.filter((event) => event.type === "press-key")
+    .map((event) => event.value);
+  console.log(`  key presses recorded: ${JSON.stringify(keyPresses)}`);
+
+  assert.ok(keyPresses.includes("Control+f"),
+    `Ctrl+F was not recorded. Recorded: ${JSON.stringify(keyPresses)}`);
+  assert.ok(keyPresses.includes("Escape"),
+    "the standalone keys must still work");
+
+  // And the extension's own shortcut must never appear as a step.
+  assert.ok(!keyPresses.some((k) => k.toLowerCase().includes("control+shift+e")),
+    "the extension's own shortcut was recorded as a step");
+
+  await page.close();
+});

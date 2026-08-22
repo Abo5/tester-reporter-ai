@@ -220,13 +220,24 @@ application swallows internally. It does **not** cost response bodies — those 
 from the MAIN-world `fetch` patch. A build without it still produces good
 reports.
 
-**Recording on a site you have not granted still works**, and costs you one
-thing. Press Record and the extension injects into that single tab using
-`activeTab` — the one-tab permission Chrome gives an extension you just invoked.
-Clicks, typing, the page snapshot, the video and the generated script are all
-unaffected. What you lose is network capture for requests the page made *before*
-you pressed Record, because the `fetch` patch lands on invocation instead of at
-`document_start`. Granting the origin removes that gap.
+**Recording on a site you have not granted still works**, with two caveats.
+Press Record — use the keyboard shortcut, since `activeTab` is only granted by a
+real invocation — and the extension injects into that single tab, re-injecting
+after every navigation so the rest of the journey keeps recording.
+
+What you lose:
+
+- **Requests the page made before you pressed Record.** The `fetch` patch lands
+  on invocation instead of at `document_start`.
+- **Everything after you leave the site.** `activeTab` is revoked by a
+  cross-origin navigation, so a journey that crosses to another domain stops
+  capturing interactions there.
+
+Granting the origin removes both. The first real session against a live site ran
+this path without a grant and produced a script that was almost entirely
+`page.goto()` calls — every click after the first navigation was lost, because
+an injected script belongs to one document. The re-injection above is what fixed
+it.
 
 **Why there are no `content_scripts` in the manifest.** A static entry with
 `<all_urls>` matches forces the broad grant even when the host permission is

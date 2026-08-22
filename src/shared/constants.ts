@@ -196,6 +196,16 @@ export const ESTIMATED_VIDEO_TOKENS_PER_SECOND: number = 300;
 /** VERIFY: the per-image token cost. Placeholder. */
 export const ESTIMATED_TOKENS_PER_KEY_FRAME: number = 300;
 
+/**
+ * How long the generated script waits between steps, in milliseconds.
+ *
+ * Three seconds, because the first person to run a generated script is the
+ * tester who just recorded it, and they are running it to WATCH it. A replay
+ * that finishes before they have focused the window proves nothing to them.
+ * The script reads STEP_PAUSE_MS from the environment, so CI sets it to 0.
+ */
+export const DEFAULT_STEP_PAUSE_MS: number = 3000;
+
 // -----------------------------------------------------------------------------
 // Storage
 // -----------------------------------------------------------------------------

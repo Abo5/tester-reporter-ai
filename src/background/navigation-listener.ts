@@ -8,10 +8,16 @@ import type { RecordedEvent } from "../shared/types";
 import type { FrameInventoryEntry } from "../shared/messages";
 import { readActiveState, writeActiveState, videoOffsetForState }
   from "./session-state";
+import type { ActiveRecordingState } from "./session-state";
 import { appendEvent } from "../storage/events";
 import { recordEventProgress } from "../storage/sessions";
 import { withSerialisedState } from "./message-router";
 import { logWarning } from "../shared/logger";
+import {
+  injectIntoTabForThisSession,
+  isTabOriginGranted,
+} from "./content-script-registration";
+
 
 /**
  * The iframe inventory reported by each frame's content script, keyed by the
@@ -196,6 +202,46 @@ async function recordNavigationEvent(
   await recordEventProgress(state.sessionId, state.eventCount, url);
 }
 
+
+/**
+ * Puts the content scripts back into a tab that has just navigated.
+ *
+ * WHY this is necessary, and why it was not obvious: when the tester records on
+ * a site they have not granted, the scripts are injected with
+ * chrome.scripting.executeScript under activeTab. That injection belongs to one
+ * DOCUMENT, not to the tab. The first full page load throws it away, and from
+ * that moment the session records navigations and nothing else - no clicks, no
+ * typing.
+ *
+ * The first real session against a live site showed exactly that shape: ten
+ * interactions on the login page, then seven bare navigations and not one click
+ * for the rest of the journey. The generated script was a list of page.goto()
+ * calls, which replays but proves nothing.
+ *
+ * A registered content script does not have this problem - Chrome re-injects it
+ * on every load - so this only runs for origins with no grant.
+ *
+ * WHY onCommitted rather than onCompleted: the MAIN-world script patches fetch,
+ * and a patch that arrives after the page has already made its requests records
+ * nothing. Committed is the earliest point at which a document exists to inject
+ * into.
+ */
+async function reinjectAfterNavigation(tabId: number, url: string): Promise<void> {
+  const granted: boolean = await isTabOriginGranted(url);
+  if (granted) {
+    return;   // A registered script is already handling this origin.
+  }
+
+  const injected: boolean = await injectIntoTabForThisSession(tabId);
+  if (!injected) {
+    // activeTab is revoked by a cross-origin navigation, so this is a normal
+    // end state for a journey that leaves the site, not a bug. The session
+    // keeps recording navigations; it just stops seeing interactions.
+    logWarning("navigation",
+      "Could not re-inject after navigation. Grant this site to record it fully.");
+  }
+}
+
 /**
  * Registers navigation listeners.
  *
@@ -226,6 +272,21 @@ export function installNavigationListeners(): void {
           details.tabId,
           details.frameId,
         );
+      });
+
+      // Outside the serialised chain on purpose: injection does not touch
+      // session state, and making it queue behind the event chain would delay
+      // the fetch patch past the page's first requests.
+      void readActiveState().then(function afterState(
+        state: ActiveRecordingState | null,
+      ): void {
+        if (state === null || state.status !== "recording") {
+          return;
+        }
+        if (details.tabId !== state.tabId) {
+          return;
+        }
+        void reinjectAfterNavigation(details.tabId, details.url);
       });
     },
   );

@@ -170,13 +170,52 @@ const FAILING_REQUEST = [{
   initiatorPageUrl: "https://staging.example.sa/services",
 }];
 
-test("the generated spec NEVER contains an arbitrary sleep", () => {
+test("no step SYNCHRONISES on a sleep", () => {
+  // The original rule here was "no waitForTimeout anywhere", and it was the
+  // right rule for the wrong reason. What makes a sleep an anti-pattern is
+  // using it to wait for the application: it is slower than the app on a fast
+  // machine and shorter than it on a slow one, which is the definition of a
+  // flaky test. Every step still derives its own wait - waitForURL, or
+  // Playwright's own auto-waiting.
+  //
+  // The script now also carries ONE deliberate pause between steps, so the
+  // tester who recorded the session can watch the replay rather than see it
+  // flash past. That is a viewing aid, not synchronisation, and it is gated
+  // behind an environment variable so CI runs at full speed.
   const spec = api.generatePlaywrightSpec(
     SESSION, buildWorkedExampleTrace(), FAILING_REQUEST);
 
-  assert.ok(!spec.includes("waitForTimeout"),
-    "a sleep leaked into the generated spec; Playwright auto-waits instead");
   assert.ok(!spec.includes("setTimeout"));
+
+  // Exactly one waitForTimeout, inside the pause helper, driven by a variable.
+  const sleeps = spec.split("waitForTimeout").length - 1;
+  assert.equal(sleeps, 1,
+    `expected one waitForTimeout (the pause helper), found ${sleeps}`);
+  assert.ok(spec.includes("await page.waitForTimeout(stepPauseMs)"),
+    "the only sleep must be the viewing pause, driven by stepPauseMs");
+  assert.ok(!spec.includes("waitForTimeout(3000)"),
+    "a literal sleep leaked into a step; steps must derive their own waits");
+});
+
+test("the pause between steps is three seconds, and CI can switch it off", () => {
+  const spec = api.generatePlaywrightSpec(
+    SESSION, buildWorkedExampleTrace(), FAILING_REQUEST);
+
+  assert.ok(spec.includes("process.env.STEP_PAUSE_MS ?? 3000"),
+    "the replay must default to a watchable pace and stay overridable");
+  assert.ok(spec.includes("if (stepPauseMs > 0)"),
+    "STEP_PAUSE_MS=0 has to mean no sleep at all, not a zero-length one");
+});
+
+test("every step is followed by the pause", () => {
+  const spec = api.generatePlaywrightSpec(
+    SESSION, buildWorkedExampleTrace(), FAILING_REQUEST);
+
+  const stepComments = spec.split(/\/\/ \[\d\d:\d\d\] step /).length - 1;
+  const pauses = spec.split("await pause();").length - 1;
+  assert.equal(pauses, stepComments,
+    `${stepComments} steps but ${pauses} pauses; a step without a pause is a `
+    + "step the watcher misses");
 });
 
 test("a click that caused a navigation gets a real waitForURL", () => {
@@ -589,4 +628,45 @@ test("waitForURL gets a regex, because a string would be a glob pattern", () => 
   assert.ok(spec.includes("waitForURL(/^"), `expected a regex literal:\n${spec}`);
   assert.ok(spec.includes("\\?q=a\\*b"),
     `the ? and * must be escaped so they match literally:\n${spec}`);
+});
+
+// -----------------------------------------------------------------------------
+// Keyboard commands
+//
+// A tester pressed Ctrl+F to find a record they had just created, and nothing
+// was recorded at all: the capture layer listened for Enter, Tab and Escape and
+// dropped everything else. The whole search was invisible to the report, and a
+// reviewer could not tell how the tester found the row.
+// -----------------------------------------------------------------------------
+
+test("a browser-level shortcut is flagged as unreproducible", () => {
+  const note = api.describeBrowserLevelShortcut("Control+f");
+  assert.match(note, /find bar/);
+  assert.match(note, /will pass without reproducing/,
+    "the comment has to say the line passes without doing anything, or the "
+    + "next reader believes the search is covered");
+});
+
+test("an application shortcut gets no warning", () => {
+  // Ctrl+S in a web application is the application's own save. Playwright
+  // reproduces it exactly, so a warning would be noise.
+  assert.equal(api.describeBrowserLevelShortcut("Control+s"), "");
+  assert.equal(api.describeBrowserLevelShortcut("Enter"), "");
+  assert.equal(api.describeBrowserLevelShortcut("Alt+ArrowLeft"), "");
+});
+
+test("a recorded key combination replays through page.keyboard.press", () => {
+  const events = buildWorkedExampleTrace();
+  const ctrlF = { ...events[events.length - 1] };
+  ctrlF.index = events.length;
+  ctrlF.type = "press-key";
+  ctrlF.value = "Control+f";
+  ctrlF.locator = null;
+
+  const spec = api.generatePlaywrightSpec(SESSION, [...events, ctrlF], []);
+
+  assert.ok(spec.includes("await page.keyboard.press('Control+f');"),
+    `the key combination did not reach the spec:\n${spec}`);
+  assert.ok(spec.includes("browser chrome, not part of the page"),
+    "the honest warning did not reach the spec");
 });

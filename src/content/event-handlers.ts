@@ -637,21 +637,135 @@ export function handleChange(nativeEvent: Event): void {
 // Keyboard
 // -----------------------------------------------------------------------------
 
-/** The only keys that change application state on their own. */
-const RECORDED_KEYS: readonly string[] = ["Enter", "Tab", "Escape"];
+/**
+ * Keys that act on their own, with no text to show for it.
+ *
+ * A plain character key is already represented by the coalesced "input" event,
+ * so recording it again would double the length of the spec and tell nobody
+ * anything. These keys leave no such trace: nothing in the DOM says the tester
+ * pressed Escape.
+ */
+const RECORDED_KEYS: readonly string[] = [
+  "Enter", "Tab", "Escape",
+  "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
+  "Home", "End", "PageUp", "PageDown",
+  "Delete", "Backspace",
+];
 
 /**
- * Records Enter / Tab / Escape only.
+ * True when this key press carries a modifier that makes it a command rather
+ * than typing.
  *
- * WHY only these three: every other keystroke is already represented by the
- * coalesced "input" event, and recording them individually would double the
- * length of the generated spec for no added information.
+ * WHY this matters, from a real session: a tester pressed Ctrl+F to find the
+ * record they had just added, and nothing was recorded at all. The whole search
+ * was invisible to the report, and the reviewer reading it could not tell how
+ * the tester found the row. Any Ctrl / Alt / Meta combination is a deliberate
+ * command and gets recorded.
+ *
+ * Shift is deliberately NOT here: Shift+A is just a capital A, and it is
+ * already in the input event.
+ */
+function isCommandKeyPress(nativeEvent: KeyboardEvent): boolean {
+  return nativeEvent.ctrlKey || nativeEvent.altKey || nativeEvent.metaKey;
+}
+
+/**
+ * True for a key that should be recorded when it is pressed OUTSIDE a text
+ * field.
+ *
+ * Backspace and Delete inside a field are editing, and the resulting text is
+ * already captured by the input event. Outside a field they are navigation or
+ * deletion of a selected row, which nothing else records.
+ */
+function isEditingKeyInsideTextField(
+  nativeEvent: KeyboardEvent,
+  target: Element | null,
+): boolean {
+  if (nativeEvent.key !== "Backspace" && nativeEvent.key !== "Delete") {
+    return false;
+  }
+  if (target === null) {
+    return false;
+  }
+
+  const tagName: string = target.tagName.toUpperCase();
+  if (tagName === "TEXTAREA") {
+    return true;
+  }
+  if (tagName === "INPUT") {
+    return true;
+  }
+  if ((target as HTMLElement).isContentEditable) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Builds the key string in the form Playwright's press() expects.
+ *
+ * WHAT: "Control+f", "Alt+ArrowLeft", "Enter". WHY this exact order and
+ * spelling: page.keyboard.press() parses this format, so a recorded value can
+ * go straight into the generated script without a translation step that could
+ * get it wrong.
+ */
+export function describeKeyPress(nativeEvent: KeyboardEvent): string {
+  const parts: string[] = [];
+
+  if (nativeEvent.ctrlKey) {
+    parts.push("Control");
+  }
+  if (nativeEvent.altKey) {
+    parts.push("Alt");
+  }
+  if (nativeEvent.metaKey) {
+    parts.push("Meta");
+  }
+  if (nativeEvent.shiftKey && nativeEvent.key.length === 1) {
+    parts.push("Shift");
+  }
+
+  parts.push(nativeEvent.key);
+  return parts.join("+");
+}
+
+/**
+ * Records the key presses that carry information no other event does.
+ *
+ * Three groups:
+ *   - anything with Ctrl / Alt / Meta, because that is a command;
+ *   - keys that act on their own (Enter, Escape, arrows, Home/End, ...);
+ *   - and nothing else, because plain typing is already in the input event.
  */
 export function handleKeyDown(nativeEvent: KeyboardEvent): void {
   if (!isRecordingActive) {
     return;
   }
-  if (!RECORDED_KEYS.includes(nativeEvent.key)) {
+
+  const target: Element | null = getRealEventTarget(nativeEvent);
+  const isCommand: boolean = isCommandKeyPress(nativeEvent);
+  const isStandaloneKey: boolean = RECORDED_KEYS.includes(nativeEvent.key);
+
+  if (!isCommand && !isStandaloneKey) {
+    return;
+  }
+
+  // A bare modifier on its own is the start of a combination, not a command.
+  if (nativeEvent.key === "Control" || nativeEvent.key === "Alt"
+      || nativeEvent.key === "Meta" || nativeEvent.key === "Shift") {
+    return;
+  }
+
+  // Never record the extension's own shortcut. The tester presses it to STOP
+  // recording, and recording it would put a phantom final step in every single
+  // session - a step that, if anyone replayed it, would do nothing at all.
+  if (nativeEvent.ctrlKey && nativeEvent.shiftKey
+      && nativeEvent.key.toLowerCase() === "e") {
+    return;
+  }
+
+  if (!isCommand && isEditingKeyInsideTextField(nativeEvent, target)) {
     return;
   }
 
@@ -667,9 +781,8 @@ export function handleKeyDown(nativeEvent: KeyboardEvent): void {
     lastEnterPressWallClockMs = Date.now();
   }
 
-  const target: Element | null = getRealEventTarget(nativeEvent);
   const event: RecordedEvent = createBaseEvent("press-key");
-  event.value = nativeEvent.key;
+  event.value = describeKeyPress(nativeEvent);
 
   if (target !== null && target !== document.body
       && target !== document.documentElement) {
