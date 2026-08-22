@@ -45,14 +45,23 @@ look at. The fix that matters is not the patch, it is the structural test that
 now plants a secret in *every* string of the bundle and reports where it
 survived.
 
-**The video path is armed but not completed under test.** Chrome only allows
-tab capture after the user *invokes* the extension, which is why there is now a
-`Ctrl+Shift+E` shortcut — pressing it grants the permission and starts
-recording. Testing proves the shortcut binds, the grant goes through and
-`tabCapture` hands over a stream. What it cannot prove is anything after that:
-capture needs a compositor producing frames, and a headless X server with no GPU
-has none. `MediaRecorder` output, the WebM/MP4 choice and the Files API upload
-are one manual run away. Section 21 of PLAN.md has the detail.
+**Video has never been recorded on the development machine**, and the reason is
+now known rather than guessed. Chromium's own media logs show it refuses to
+capture a tab on this hardware — on a headless X server *and* on the real
+desktop, with and without audio. Everything up to that point is proven working:
+the `Ctrl+Shift+E` shortcut binds, the invocation grants `activeTab`,
+`getMediaStreamId` returns a stream, and the offscreen document consumes it.
+
+Chasing it properly changed the product, which is section 23 of PLAN.md:
+**a failed capture attempt LOCKS the tab**, so there is exactly one attempt and
+no retry is possible. That makes asking for the tab's own audio a bad default —
+it risks the whole video on any machine whose audio cannot be captured, to gain
+application sounds, while your spoken narration is a separate stream and is
+unaffected. Tab audio is now opt-in, and a retry mechanism that could never have
+worked was removed.
+
+`MediaRecorder` output, the WebM/MP4 choice and the Files API upload are one
+manual run on an ordinary desktop away.
 
 **`uploadVideoToFilesApi` in [`src/ai/gemini.ts`](src/ai/gemini.ts) is still a
 sketch of the flow, not verified code**, and says so inline. The live test does

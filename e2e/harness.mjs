@@ -40,6 +40,15 @@ export async function launchWithExtension(options = {}) {
       // X11 window for xdotool to focus - and therefore no way to deliver a
       // real browser-level keyboard shortcut.
       "--ozone-platform=x11",
+      // Give the browser a real window.
+      //
+      // Without an explicit size the window came up 10x10 pixels under
+      // XWayland, which is a rendering surface of essentially nothing - and
+      // tabCapture aborts when there is no surface to capture. That was the
+      // real cause of "AbortError: Error starting tab capture", not the absence
+      // of a GPU.
+      "--window-size=1280,900",
+      "--window-position=0,0",
       // Grant getUserMedia without a prompt so the microphone path can run on a
       // machine with no hardware.
       //
@@ -52,6 +61,11 @@ export async function launchWithExtension(options = {}) {
 
       ...(options.extraArgs ?? []),
     ],
+    // viewport: null means "use the real window", instead of overriding the
+    // renderer's metrics via CDP. With an override the renderer reports
+    // 1280x860 while the actual OS window stays 10x10 - and tabCapture
+    // captures the real surface, not the emulated one.
+    viewport: null,
     ...options.contextOptions,
   });
 
@@ -170,28 +184,14 @@ export async function sendBrowserShortcut(keys) {
   const { promisify } = await import("node:util");
   const run = promisify(execFile);
 
-  // --onlyvisible is the more precise query but reports nothing under some
-  // bare window managers, so fall back to the broader one.
-  const searches = [
-    ["search", "--onlyvisible", "--class", "chrom"],
-    ["search", "--class", "chrom"],
-    ["search", "--classname", "chrom"],
-  ];
-
-  let windowId = "";
-  for (const args of searches) {
-    try {
-      const { stdout } = await run("xdotool", args);
-      const ids = stdout.split("\n").map((l) => l.trim()).filter(Boolean);
-      if (ids.length > 0) {
-        windowId = ids[ids.length - 1];
-        break;
-      }
-    } catch (searchError) {
-      // Try the next strategy.
-    }
-  }
-
+  // Find the REAL browser window, not one of Chromium's helpers.
+  //
+  // Chromium creates several X windows: a 10x10 "chrome" window and a 10x10
+  // "Chromium clipboard" window alongside the actual browser. Searching by
+  // class matched a helper, so the shortcut was being activated against a
+  // window with no tabs in it. The real one is identifiable by size: it is the
+  // only one big enough to hold a page.
+  const windowId = await findBrowserWindowId(run);
   if (windowId === "") {
     return false;
   }
@@ -210,4 +210,46 @@ export async function sendBrowserShortcut(keys) {
   } catch (sendError) {
     return false;
   }
+}
+
+/**
+ * Returns the X window id of the actual browser window, or "".
+ *
+ * Chromium puts several windows on the display - a 10x10 "chrome" helper and a
+ * 10x10 clipboard window among them - and only one of them is the browser.
+ * Picking by geometry is the reliable discriminator: the browser window is the
+ * only one large enough to render a page into.
+ */
+async function findBrowserWindowId(run) {
+  let ids = [];
+  try {
+    const { stdout } = await run("xdotool", ["search", "--name", "."]);
+    ids = stdout.split("\n").map((l) => l.trim()).filter(Boolean);
+  } catch (searchError) {
+    return "";
+  }
+
+  let bestId = "";
+  let bestArea = 0;
+
+  for (const id of ids) {
+    try {
+      const { stdout } = await run("xdotool", ["getwindowgeometry", id]);
+      const match = /Geometry:\s*(\d+)x(\d+)/.exec(stdout);
+      if (match === null) {
+        continue;
+      }
+      const area = Number(match[1]) * Number(match[2]);
+      if (area > bestArea) {
+        bestArea = area;
+        bestId = id;
+      }
+    } catch (geometryError) {
+      // Window vanished between listing and querying; skip it.
+    }
+  }
+
+  // A browser window is at least a few hundred pixels on a side. Anything
+  // smaller is a helper, and activating it would send the shortcut nowhere.
+  return bestArea > 200 * 200 ? bestId : "";
 }

@@ -44,6 +44,7 @@ const languageSelect = requireElement<HTMLSelectElement>("language-select");
 const enableMicrophoneButton =
   requireElement<HTMLButtonElement>("enable-microphone-button");
 const microphoneStatus = requireElement<HTMLElement>("microphone-status");
+const captureTabAudio = requireElement<HTMLInputElement>("capture-tab-audio");
 const neverUploadVideo = requireElement<HTMLInputElement>("never-upload-video");
 const resetConsentButton = requireElement<HTMLButtonElement>("reset-consent-button");
 const consentStatus = requireElement<HTMLElement>("consent-status");
@@ -257,6 +258,11 @@ function installRemainingHandlers(): void {
     void requestMicrophonePermission();
   });
 
+  captureTabAudio.addEventListener("change", function onTabAudio(): void {
+    void writeSettings({ captureTabAudio: captureTabAudio.checked })
+      .then(flashSaved);
+  });
+
   neverUploadVideo.addEventListener("change", function onNeverUpload(): void {
     void writeSettings({ neverUploadVideo: neverUploadVideo.checked })
       .then(flashSaved);
@@ -344,6 +350,7 @@ async function initialiseOptions(): Promise<void> {
   renderApiKeyStatus(settings.geminiApiKey);
   renderModelOptions(settings.modelId);
   languageSelect.value = settings.reportLanguage;
+  captureTabAudio.checked = settings.captureTabAudio;
   neverUploadVideo.checked = settings.neverUploadVideo;
   redactionPatterns.value = settings.customRedactionPatterns.join("\n");
   retentionSelect.value = String(settings.retentionDays);

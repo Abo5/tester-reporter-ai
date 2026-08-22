@@ -174,3 +174,30 @@ test("collapsible wrapper divs are removed", async () => {
   assert.ok(divCount <= 1, `expected wrappers to collapse, saw ${divCount} divs`);
   assert.ok(result.prunedHtml.includes("Real content"));
 });
+
+test("the pruned snapshot NEVER exceeds its budget, marker included", async () => {
+  // The overflow marker used to be appended without being counted, so a
+  // snapshot could exceed the documented budget by the marker's own length.
+  // Found on the real OrangeHRM login page: 40,021 characters against 40,000.
+  // The budget is a promise the token estimate and the request size depend on.
+  const rows = Array.from({ length: 400 }, (_, i) =>
+    `<tr><td>Tenant ${i}</td><td>Contract number ${i}</td>
+     <td>Some status text for row ${i}</td></tr>`).join("");
+  installDom(`<html><body><table><tbody>${rows}</tbody></table></body></html>`);
+  const api = await import("../dist-test/test-api.mjs");
+
+  for (const budget of [500, 2000, 40000, api.MAX_SNAPSHOT_CHARACTERS]) {
+    const result = api.pruneDomForAI(document, {
+      ...api.DEFAULT_PRUNE_OPTIONS,
+      maxTotalCharacters: budget,
+    });
+    assert.ok(result.prunedHtml.length <= budget,
+      `budget ${budget} overrun by ${result.prunedHtml.length - budget} chars`);
+    assert.equal(result.characterCount, result.prunedHtml.length,
+      "characterCount must match the string it describes");
+    if (result.wasTruncated) {
+      assert.ok(result.prunedHtml.includes("BUDGET EXHAUSTED"),
+        "a truncated snapshot must say so");
+    }
+  }
+});

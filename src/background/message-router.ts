@@ -379,6 +379,7 @@ async function handleStartRecording(
       kind: "offscreen/start",
       tabStreamId: tabStreamId,
       captureMicrophone: captureMicrophone,
+      captureTabAudio: settings.captureTabAudio,
       sessionId: sessionId,
     });
   } catch (captureError: unknown) {
@@ -1096,6 +1097,14 @@ async function routeMessage(
 
     case "offscreen/error":
       await handleOffscreenError(message.sessionId, message.reason);
+      return { ok: true };
+
+    case "offscreen/retry-without-audio":
+      // Retained in the message union so the switch stays exhaustive. There is
+      // nothing useful to do: a failed capture locks the tab, so no fresh
+      // stream id can be minted for it.
+      logWarning("router", "Capture reported a failure it cannot recover from: "
+        + message.reason);
       return { ok: true };
 
     case "offscreen/ready":

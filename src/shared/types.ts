@@ -517,6 +517,16 @@ export interface ExtensionSettings {
   modelId: string;
   reportLanguage: ReportLanguage;
   captureMicrophone: boolean;
+  /**
+   * Also capture the tab's own audio.
+   *
+   * OFF by default, and deliberately so. A tabCapture request that asks for
+   * audio fails outright on a machine whose audio stack cannot be captured, and
+   * a failed attempt LOCKS the tab - there is no second try. That risks the
+   * entire video to gain application sounds, while the tester's narration comes
+   * from a separate microphone stream and is unaffected.
+   */
+  captureTabAudio: boolean;
   /** Global switch: when true the video is never uploaded, whatever else. */
   neverUploadVideo: boolean;
   /** Set once the tester has accepted the video-upload warning. */

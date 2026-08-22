@@ -111,10 +111,36 @@ export interface FrameInventoryEntry {
 
 export interface OffscreenStartMessage {
   kind: "offscreen/start";
-  /** Produced by chrome.tabCapture.getMediaStreamId() in the service worker. */
+  /**
+   * Produced by chrome.tabCapture.getMediaStreamId() in the service worker.
+   *
+   * SINGLE USE: one getUserMedia call consumes it. A second call with the same
+   * id fails with STREAM_NOT_FOUND_IN_REGISTRY, so any retry needs a new one
+   * minted by the worker.
+   */
   tabStreamId: string;
   captureMicrophone: boolean;
+  /**
+   * Whether to ask for the tab's own audio.
+   *
+   * False on a retry: a machine with no audio output device fails the whole
+   * request with NO_HARDWARE when audio is included, and refusing to record
+   * video because the tab had no sound to capture is the wrong trade.
+   */
+  captureTabAudio: boolean;
   sessionId: string;
+}
+
+/**
+ * The offscreen document asking for a fresh stream id, without tab audio.
+ *
+ * It cannot mint one itself: chrome.tabCapture is not available to an offscreen
+ * document, and the id it was given has already been spent.
+ */
+export interface OffscreenRetryWithoutAudioMessage {
+  kind: "offscreen/retry-without-audio";
+  sessionId: string;
+  reason: string;
 }
 
 export interface OffscreenPauseMessage {
@@ -200,6 +226,7 @@ export type ExtensionMessage =
   | OffscreenReadyMessage
   | OffscreenFinishedMessage
   | OffscreenErrorMessage
+  | OffscreenRetryWithoutAudioMessage
   | RequestFinalSnapshotMessage
   | StatusUpdateMessage;
 

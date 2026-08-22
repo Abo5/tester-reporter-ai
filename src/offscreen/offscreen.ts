@@ -91,7 +91,10 @@ function chooseRecordingMimeType(): string {
  * official offscreen-recording sample uses, but it is non-standard and the
  * exact key names must be confirmed against current documentation.
  */
-async function openTabStream(tabStreamId: string): Promise<MediaStream> {
+async function openTabStream(
+  tabStreamId: string,
+  captureTabAudio: boolean,
+): Promise<MediaStream> {
   // The cast is genuinely unavoidable: chromeMediaSource and
   // chromeMediaSourceId are Chrome-only constraint keys that do not exist in
   // the standard MediaTrackConstraints type, so the object cannot be typed
@@ -104,46 +107,29 @@ async function openTabStream(tabStreamId: string): Promise<MediaStream> {
   // instead. (Testing showed this was not what caused capture to fail - the
   // audio track was - but mixing deprecated constraint dialects in a call this
   // fragile is not worth the risk.)
-  const chromeConstraints = {
-    audio: {
-      mandatory: {
-        chromeMediaSource: "tab",
-        chromeMediaSourceId: tabStreamId,
-      },
+  const videoConstraint = {
+    mandatory: {
+      chromeMediaSource: "tab",
+      chromeMediaSourceId: tabStreamId,
     },
-    video: {
-      mandatory: {
-        chromeMediaSource: "tab",
-        chromeMediaSourceId: tabStreamId,
-      },
-    },
-  } as unknown as MediaStreamConstraints;
+  };
 
-  let stream: MediaStream;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia(chromeConstraints);
-  } catch (captureError: unknown) {
-    // Retry WITHOUT tab audio.
-    //
-    // A machine with no audio output device - a CI container, a headless test
-    // runner, some locked-down corporate images - fails the whole request with
-    // "NotFoundError: Requested device not found", because the audio half
-    // cannot be satisfied. Refusing to record video at all because the tab had
-    // no sound to capture is the wrong trade, so ask again for video only.
-    logWarning("offscreen",
-      "Tab capture with audio failed; retrying video only.", captureError);
+  const chromeConstraints = (
+    captureTabAudio
+      ? {
+          audio: {
+            mandatory: {
+              chromeMediaSource: "tab",
+              chromeMediaSourceId: tabStreamId,
+            },
+          },
+          video: videoConstraint,
+        }
+      : { video: videoConstraint }
+  ) as unknown as MediaStreamConstraints;
 
-    const videoOnlyConstraints = {
-      video: {
-        mandatory: {
-          chromeMediaSource: "tab",
-          chromeMediaSourceId: tabStreamId,
-        },
-      },
-    } as unknown as MediaStreamConstraints;
-
-    stream = await navigator.mediaDevices.getUserMedia(videoOnlyConstraints);
-  }
+  const stream: MediaStream =
+    await navigator.mediaDevices.getUserMedia(chromeConstraints);
 
   await limitVideoTrackSize(stream);
   return stream;
@@ -256,6 +242,7 @@ function mixAudioTracks(
 async function startRecording(
   tabStreamId: string,
   captureMicrophone: boolean,
+  captureTabAudio: boolean,
   sessionId: string,
 ): Promise<void> {
   currentSessionId = sessionId;
@@ -263,7 +250,13 @@ async function startRecording(
   accumulatedRecordedMs = 0;
   isCurrentlyPaused = false;
 
-  tabStream = await openTabStream(tabStreamId);
+  // ONE attempt. There is no second chance.
+  //
+  // A failed tabCapture request leaves the tab registered as captured, so every
+  // later getMediaStreamId for it returns "Cannot capture a tab with an active
+  // stream". Retrying - with the same id or a fresh one - cannot work, which is
+  // why the request has to be right the first time and why tab audio is opt-in.
+  tabStream = await openTabStream(tabStreamId, captureTabAudio);
 
   microphoneStream = null;
   if (captureMicrophone) {
@@ -528,6 +521,7 @@ function handleRuntimeMessage(rawMessage: unknown): void {
     startRecording(
       message.tabStreamId,
       message.captureMicrophone,
+      message.captureTabAudio,
       message.sessionId,
     ).catch(function onStartError(startError: unknown): void {
       logError("offscreen", "Could not start recording.", startError);

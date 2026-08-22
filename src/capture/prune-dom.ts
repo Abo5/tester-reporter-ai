@@ -283,15 +283,31 @@ export function createPruneState(): PruneState {
  * Appends a chunk of output if there is budget left; otherwise flips the
  * exhausted flag so the whole walk unwinds cleanly.
  */
+/** Emitted in place of the content that did not fit. */
+const BUDGET_MARKER: string = "<!-- BUDGET EXHAUSTED: remaining content omitted -->";
+
 function appendOutput(state: PruneState, chunk: string, options: PruneOptions): void {
   if (state.budgetExhausted) {
     return;
   }
-  if (state.charactersUsed + chunk.length > options.maxTotalCharacters) {
-    state.outputParts.push("<!-- BUDGET EXHAUSTED: remaining content omitted -->");
+
+  // Room for the marker is reserved UP FRONT.
+  //
+  // The marker used to be pushed straight into outputParts when the cap was
+  // hit, bypassing the accounting and the cap it had just enforced - so the
+  // finished snapshot overran the documented budget by the marker's own length.
+  // The real OrangeHRM login page produced 40,021 characters against a 40,000
+  // budget; no fixture had ever landed close enough to the boundary to show it.
+  const effectiveBudget: number =
+    options.maxTotalCharacters - BUDGET_MARKER.length;
+
+  if (state.charactersUsed + chunk.length > effectiveBudget) {
+    state.outputParts.push(BUDGET_MARKER);
+    state.charactersUsed = state.charactersUsed + BUDGET_MARKER.length;
     state.budgetExhausted = true;
     return;
   }
+
   state.outputParts.push(chunk);
   state.charactersUsed = state.charactersUsed + chunk.length;
 }

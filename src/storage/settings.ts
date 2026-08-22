@@ -27,6 +27,7 @@ export function createDefaultSettings(): ExtensionSettings {
     modelId: DEFAULT_MODEL_ID,
     reportLanguage: "en",
     captureMicrophone: false,
+    captureTabAudio: false,
     neverUploadVideo: false,
     videoUploadConsentGiven: false,
     customRedactionPatterns: [],

@@ -144,21 +144,37 @@ test("recording started by shortcut captures actual video", async (t) => {
     // the activeTab grant went through and tabCapture handed over a stream id.
     // What fails after that is the compositor, and a headless X server on a
     // machine with no GPU does not have one.
+    // Distinguish "this machine cannot capture a tab" from "the product is
+    // broken". These three are what Chromium reports when its capture backend
+    // cannot serve the request at all; the diagnosis below was confirmed
+    // against Chromium's own --vmodule=*media_stream* output, not inferred.
     const isEnvironmental =
-      reason.includes("Error starting tab capture")
-      || reason.includes("AbortError")
-      || reason.includes("NotReadableError");
+      reason.includes("Error starting tab capture")     // AbortError
+      || reason.includes("Requested device not found")  // NotFoundError
+      || reason.includes("NotReadableError")
+      || reason.includes("did not report back");
 
     if (isEnvironmental) {
       console.log(
-        "\n  Tab capture was ARMED successfully - the activeTab grant and the\n"
-        + "  stream id both worked - but this environment cannot composite the\n"
-        + "  frames to record. That is Xvfb with no GPU, not a product defect.\n"
-        + "  The media path below this point is NOT covered by this run.\n"
-        + "  Verify by hand: load dist/, press Ctrl+Shift+E on a normal page,\n"
+        "\n  Everything up to the capture backend WORKED: the shortcut bound,\n"
+        + "  the invocation granted activeTab, getMediaStreamId returned a\n"
+        + "  stream id, and the offscreen document consumed it. Chromium then\n"
+        + "  refused to produce frames.\n"
+        + "\n"
+        + "  Confirmed from Chromium's own media_stream logs on this machine,\n"
+        + "  on BOTH Xvfb and the XWayland desktop, with and without audio:\n"
+        + "    audio+video -> NO_HARDWARE\n"
+        + "    video only  -> NotFoundError\n"
+        + "  and a failed attempt LOCKS the tab, so no retry is possible.\n"
+        + "\n"
+        + "  That is this machine's capture backend, not a product defect. The\n"
+        + "  media path below this point is NOT covered by this run.\n"
+        + "\n"
+        + "  Verify by hand on a normal desktop: npm run build, load dist/ at\n"
+        + "  chrome://extensions, press Ctrl+Shift+E on any http(s) page,\n"
         + "  interact for a few seconds, press it again, and check the review\n"
         + "  page for a playable video.\n");
-      t.skip("this environment cannot composite frames for tab capture");
+      t.skip("this machine's Chromium cannot capture a tab");
       await page.close();
       return;
     }

@@ -8061,3 +8061,74 @@ the completed report against the current code.
 | 6 | **Key-frame selection kept the six earliest offsets.** The cap was applied while walking a sorted list from the start. | A five-minute session with failures at 00:30 and 04:00 sent the model four frames of the first 32 seconds, dropped the second failure entirely, and dropped the final-state frame the design promises is always included. Slots are now reserved by priority — ends first, then failures working backwards from the most recent — and only then sorted for output. |
 | 7 | **The "recording without video" warning vanished on worker restart.** It lived in a module variable. | The worker is terminated when idle, the variable reset to `""`, and the next broadcast actively **erased a warning that was still true** — typically at the exact moment the tester had stopped interacting long enough to read it. It now lives beside the recording state. |
 | 8 | **The iframe inventory was a one-shot snapshot**, and empty inventories were not reported at all. | An SPA that mounts an iframe later never updated it, and the consumer then fell back to `iframe:nth-of-type((frameId % count) + 1)` — `frameId` is an opaque browser-assigned number, so that was a positional guess wearing the costume of a selector, silently targeting a *different* iframe. It now refreshes on change and falls back to a URL-derived selector. |
+
+---
+
+## 23. The video path — what the logs actually said
+
+Section 21.5 left the media path "armed but not completed", and blamed the missing
+compositor. That guess was wrong, and chasing it properly changed the product.
+
+### 23.1 Ruling things out, in order
+
+Chromium's own `--vmodule=*media_stream*=2` output settled every question that reading the
+code could not:
+
+| Hypothesis | Test | Result |
+|---|---|---|
+| No GPU / no compositor under Xvfb | Ran on the real XWayland desktop | **Same failure.** Not the compositor. |
+| The window is too small to capture | Measured it: the X window really was **10×10** | A red herring — `xdotool --class chrom` was matching one of Chromium's 10×10 *helper* windows. The real browser window was 1279×899 all along. |
+| The legacy `mandatory` constraint dialect is gone | Read the log | Accepted and translated correctly to `{"mediaStreamSource":{"exact":["tab"]}}`. Not it. |
+| Audio is the problem | Read the log | **Half right.** `audio+video → NO_HARDWARE`. |
+| So retry without audio | Read the log | `video only → STREAM_NOT_FOUND_IN_REGISTRY`. |
+| …because the id is single-use | Minted a fresh one | `Cannot capture a tab with an active stream`. |
+| Then video-only from the start | Forced it, ran on both displays | `NotFoundError`. **This machine cannot capture a tab at all.** |
+
+### 23.2 Three things that were wrong in the code
+
+**The retry could never have worked.** It reused the stream id that the failed attempt had
+already spent. That is `STREAM_NOT_FOUND_IN_REGISTRY`, and it means the "fallback to
+video-only" added earlier never fell back to anything — it only changed which error the
+tester saw.
+
+**Nor could any retry.** A *failed* capture attempt leaves the tab registered as being
+captured, so every subsequent `getMediaStreamId` for it returns `Cannot capture a tab with
+an active stream`. There is exactly **one attempt per tab**, and it has to be right the
+first time. Verified at 0 ms, 750 ms and 2500 ms — the lock does not clear.
+
+**Which makes asking for tab audio a bad default.** It risks the entire video on every
+machine whose audio stack cannot be captured, to gain application sounds — while the thing
+that actually matters, the tester's spoken narration, comes from a *separate* microphone
+stream and is unaffected either way.
+
+### 23.3 What changed
+
+- **Tab audio is now opt-in**, off by default, with the trade-off spelled out in Settings.
+  The default session is video + narration, which is what a bug report needs.
+- **The retry machinery is gone.** A mechanism that cannot succeed is worse than none: it
+  turns one clear failure into two confusing ones.
+- An audio-device probe was written and then **removed**. It reported two working
+  `audiooutput` devices on this machine while capture still failed with `NO_HARDWARE`, so
+  it predicted nothing. Keeping an unverified heuristic in the one code path that gets a
+  single attempt was not worth it.
+
+### 23.4 What is still not proven, stated plainly
+
+**Video has never been recorded on this machine, and nothing here changes that.** Chromium
+refuses to capture a tab on this hardware — Raspberry Pi, Chromium 149 under Playwright, on
+Xvfb and XWayland alike. Everything *up to* the capture backend is proven working: the
+shortcut binds, the invocation grants `activeTab`, `getMediaStreamId` returns an id, and
+the offscreen document consumes it.
+
+So `MediaRecorder` output, the WebM/MP4 choice (V12), the microphone-from-offscreen
+question (V10), the Files API upload and the accepted video MIME types (V5, V6) remain
+open. They need one manual run on an ordinary desktop:
+
+```
+npm run build
+# chrome://extensions -> Developer mode -> Load unpacked -> dist/
+# press Ctrl+Shift+E on any http(s) page, interact, press it again
+```
+
+The honest summary: **the investigation did not make video work here, and it made video
+more likely to work everywhere else.**
