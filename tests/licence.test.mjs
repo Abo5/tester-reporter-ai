@@ -124,3 +124,25 @@ test("the shape test rejects an empty box and a pasted sentence", () => {
   assert.equal(api.looksLikeALicenceKey("please let me in"), false);
   assert.equal(api.looksLikeALicenceKey("TRA-4F2A-9C31-88BE"), true);
 });
+
+// -----------------------------------------------------------------------------
+// Where the credential comes from
+//
+// The tester supplies no key. The build either proxies through a server or
+// carries one, and which it is decides whether the key is published.
+// -----------------------------------------------------------------------------
+
+test("an unconfigured build says so rather than failing mysteriously", () => {
+  // Both constants are empty in the repository, deliberately: a key committed
+  // here would be a key on GitHub.
+  assert.equal(api.readCredentialMode(), "unconfigured");
+});
+
+test("with no proxy the request goes to Gemini with the key header", () => {
+  const url = api.buildEndpointUrl("gemini-3.5-flash");
+  assert.match(url, /generativelanguage\.googleapis\.com/);
+  assert.match(url, /models\/gemini-3\.5-flash:generateContent$/);
+
+  const headers = api.buildRequestHeaders("AIza-example");
+  assert.equal(headers["x-goog-api-key"], "AIza-example");
+});

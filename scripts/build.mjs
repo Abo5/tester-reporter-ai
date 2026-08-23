@@ -67,9 +67,54 @@ async function copyIcons() {
   }
 }
 
+/**
+ * The Gemini credential this build carries, taken from the environment.
+ *
+ * WHY the build injects it rather than the source holding it: a key in
+ * src/shared/constants.ts is a key in git, and a key in git is a key on GitHub.
+ * The constant ships empty and the build substitutes whatever GEMINI_API_KEY
+ * holds at the moment `npm run build` runs.
+ *
+ * This does NOT make the key private. Read the warning on
+ * BUILT_IN_GEMINI_API_KEY: whatever is substituted here ends up in dist/, on
+ * every customer's disk, readable in about ten seconds. The build says so out
+ * loud when it does it, because a warning nobody sees is not a warning.
+ *
+ * GEMINI_PROXY_ENDPOINT is injected the same way and is the option that does
+ * not put a credential on a customer's machine at all.
+ */
+function buildTimeDefinitions() {
+  const apiKey = (process.env.GEMINI_API_KEY ?? "").trim();
+  const proxy = (process.env.GEMINI_PROXY_ENDPOINT ?? "").trim();
+
+  const definitions = {};
+
+  if (proxy !== "") {
+    definitions["__TRA_GEMINI_PROXY__"] = JSON.stringify(proxy);
+    console.log("  AI access: proxy at " + proxy);
+  } else if (apiKey !== "") {
+    definitions["__TRA_GEMINI_KEY__"] = JSON.stringify(apiKey);
+    console.log("  AI access: a key is COMPILED INTO THIS BUILD.");
+    console.log("             It is readable by anyone who installs it, and");
+    console.log("             the bill is yours. Set GEMINI_PROXY_ENDPOINT");
+    console.log("             instead to keep the key on your own server.");
+  } else {
+    console.log("  AI access: none configured. The free report still works.");
+  }
+
+  return definitions;
+}
+
+const BUILD_DEFINITIONS = buildTimeDefinitions();
+
 /** Builds (or watches) one entry point. */
 async function buildEntry(entry) {
   const options = {
+    define: {
+      __TRA_GEMINI_KEY__: '""',
+      __TRA_GEMINI_PROXY__: '""',
+      ...BUILD_DEFINITIONS,
+    },
     entryPoints: [path.join(ROOT, entry.in)],
     outfile: path.join(OUT_DIR, entry.out),
     bundle: true,

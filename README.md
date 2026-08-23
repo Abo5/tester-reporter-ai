@@ -246,6 +246,27 @@ Pointer movement is sampled rather than recorded raw. A browser reports it at
 the display refresh rate, which would be hundreds of thousands of entries nobody
 reads. The sample keeps the shape, which is the part that means something.
 
+## Two tiers
+
+| | Free (and after the trial) | Paid |
+|---|---|---|
+| Recording, video, Playwright script | ✅ | ✅ |
+| Report | written by the extension from your recording | written by the model from your page code, video and script |
+| What it can say | what was observed | what went wrong, and why |
+| Works offline | ✅ | ✗ |
+
+**You never enter an API key.** The build carries its own AI access, or routes
+through a proxy — see below.
+
+The free report fills the same six-field template from what was recorded: the
+steps in words, the values you typed, the failed requests, the console errors.
+It **transcribes; it does not diagnose** — with no failure captured its title is
+"Recorded session on X", not "Failure in X" — and its own first line says which
+report it is, so nobody reads a transcript as an analysis.
+
+That is still most of the work. The half hour a bug report takes is mostly
+transcription. The free tier does that in milliseconds, offline.
+
 ## Licence and trial
 
 **14 days from install, free.** After that the AI report needs a licence.
@@ -269,6 +290,19 @@ that a server can validate the moment one exists.
 | `PAYPAL_CHECKOUT_URL` | your PayPal payment link — empty in this build, and the Buy button says so |
 | `LICENCE_PRICE_DISPLAY` | the price, shown next to the button |
 | `LICENCE_VERIFY_ENDPOINT` | your verify server — until it is set, key checking is local and the options page says that in those words |
+| `GEMINI_PROXY_ENDPOINT` | **the recommended one.** Your server holds the Gemini key and calls the model for the extension |
+| `BUILT_IN_GEMINI_API_KEY` | a key compiled into the extension — read the warning first |
+
+**A key compiled into the extension is a published key.** The extension is
+unpacked JavaScript on every customer's disk; anyone who installs it can read
+the string in about ten seconds, and the bill is yours with no per-user ceiling.
+The proxy gives the customer the identical experience — they still enter
+nothing — while the key stays on your server. It can also refuse a request from
+an expired licence *before* it costs you a token, which a compiled-in key
+structurally cannot: by then the request has already been made with your
+credentials.
+
+Both ship empty. A key committed to this repository would be a key on GitHub.
 
 The payment link is deliberately not filled in. A payment URL is an account
 number, and a wrong one sends money to a stranger without anything looking

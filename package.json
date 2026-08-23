@@ -5,7 +5,7 @@
   "description": "Record a manual QA session and get a video, a runnable Playwright script, and an AI-written bug report.",
   "type": "module",
   "scripts": {
-    "build": "node scripts/build.mjs",
+    "build": "node --env-file-if-exists=.env scripts/build.mjs",
     "build:watch": "node scripts/build.mjs --watch",
     "typecheck": "tsc --noEmit",
     "test": "node scripts/build-tests.mjs && node --test tests/*.test.mjs",

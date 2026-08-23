@@ -402,3 +402,53 @@ export const PAYPAL_CHECKOUT_URL: string = "";
 
 /** Shown next to the payment button so the customer knows what they are buying. */
 export const LICENCE_PRICE_DISPLAY: string = "";
+
+// -----------------------------------------------------------------------------
+// How the extension reaches Gemini
+//
+// The tester no longer supplies a key. There are two ways to give them access,
+// and the difference between them is money.
+// -----------------------------------------------------------------------------
+
+/**
+ * A Gemini API key compiled into the extension.
+ *
+ * ⚠️ READ THIS BEFORE FILLING IT IN.
+ *
+ * A key here is a PUBLISHED key. A Chrome extension is unpacked JavaScript on
+ * every customer's disk: anyone who installs it can open the folder, or the
+ * built bundle in DevTools, and read this string in about ten seconds. It is
+ * not obfuscatable in any meaningful sense - a value the program must send has
+ * to exist in the program.
+ *
+ * The bill for that key is yours, it has no per-user ceiling, and the first
+ * sign of a problem is usually the invoice. If you ship a key here, treat it as
+ * public: put a hard quota on it in Google AI Studio, keep it separate from
+ * every other key you own, and be ready to rotate it.
+ *
+ * GEMINI_PROXY_ENDPOINT below does the same job without that exposure, and you
+ * already need a server for licences.
+ */
+declare const __TRA_GEMINI_KEY__: string;
+export const BUILT_IN_GEMINI_API_KEY: string =
+  typeof __TRA_GEMINI_KEY__ === "string" ? __TRA_GEMINI_KEY__ : "";
+
+/**
+ * Your own endpoint, which holds the key and calls Gemini on the extension's
+ * behalf.
+ *
+ * WHY this is the better half of the pair: the customer still enters nothing,
+ * the key never leaves your server, and you can refuse a request from an
+ * expired licence before it costs you a token - which a key compiled into the
+ * extension cannot do, because by then the request has already been made with
+ * your credentials.
+ *
+ * It should accept the same JSON body the Gemini generateContent endpoint
+ * accepts and return the same response, so nothing else in this codebase has to
+ * know which of the two is in use.
+ *
+ * ⚠️ VERIFY: this is a DESIGN. No proxy has been built or tested against it.
+ */
+declare const __TRA_GEMINI_PROXY__: string;
+export const GEMINI_PROXY_ENDPOINT: string =
+  typeof __TRA_GEMINI_PROXY__ === "string" ? __TRA_GEMINI_PROXY__ : "";

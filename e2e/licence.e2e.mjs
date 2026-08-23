@@ -168,3 +168,64 @@ test("the options page never claims a key was verified when nothing verified it"
   assert.match(buyNote, /No payment link is configured/,
     "a Buy button with no link behind it must say so");
 });
+
+test("an expired trial still produces a filled-in report, written locally", async () => {
+  // The free tier. A tester whose trial has ended must not land on an empty
+  // page and a sales message - they get the template filled in from their own
+  // recording, and a line saying which report they are looking at.
+  await setTrialAge(20);
+
+  const page = await browser.context.newPage();
+  await page.goto(`${server.url}/catalog.html`, { waitUntil: "load" });
+  await page.bringToFront();
+
+  const tabId = await browser.serviceWorker.evaluate(async () =>
+    (await chrome.tabs.query({ active: true, currentWindow: true }))[0]?.id ?? -1);
+
+  await callExtension(extensionPage, {
+    kind: "ui/start-recording", tabId, captureMicrophone: false,
+  });
+  await waitFor("session to reach 'recording'", async () => {
+    const state = await readRecordingState(browser.serviceWorker);
+    return state?.status === "recording";
+  });
+
+  await page.bringToFront();
+  await page.click('[data-testid="tab-renewal"]');
+  await page.fill("#tenant", "TN-40192");
+  await page.press("#tenant", "Enter");
+  await page.waitForTimeout(1500);
+
+  await callExtension(extensionPage, { kind: "ui/stop-recording" });
+  const session = await waitFor("session to finish", async () => {
+    const sessions = await readStore(extensionPage, "sessions");
+    const finished = sessions.filter((s) => s.status !== "processing"
+      && s.status !== "recording");
+    if (finished.length === 0) { return null; }
+    finished.sort((a, b) => b.startedAtMs - a.startedAtMs);
+    return finished[0];
+  }, 40000);
+
+  // Open the review page and ask for a report, as the tester would.
+  const review = await openExtensionPage(browser.context, browser.extensionId,
+    `review/review.html?session=${session.id}`);
+  await review.waitForTimeout(2500);
+  await review.click("#generate-button").catch(() => {});
+  await review.waitForTimeout(4000);
+
+  const reportBody = await review.inputValue("#report-text");
+  console.log(`  report: ${reportBody.length} chars`);
+  console.log(`  first line: ${reportBody.split("\n")[0].slice(0, 90)}`);
+
+  assert.ok(reportBody.length > 200,
+    "an expired trial produced no report at all");
+  assert.match(reportBody, /not by AI/,
+    "the free report must say which report it is");
+  assert.match(reportBody, /Steps to Reproduce/,
+    "it must be the same six-field template, filled in");
+  assert.match(reportBody, /TN-40192/,
+    "the steps must carry the tester's actual values");
+
+  await review.close();
+  await page.close();
+});

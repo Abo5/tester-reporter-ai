@@ -9,6 +9,7 @@
 // =============================================================================
 
 import type { SessionStatus, RecordingSession } from "../shared/types";
+import { readCredentialMode } from "../ai/credentials";
 import type { LicenceState, LicenceStatus } from "../shared/licence";
 import { readLicenceStatus, describeLicenceStatus } from "../shared/licence";
 import { readLicenceState } from "../storage/licence-store";
@@ -437,7 +438,9 @@ async function initialisePanel(): Promise<void> {
 
   const settings = await readSettings();
   elements.microphoneToggle.checked = settings.captureMicrophone;
-  elements.apiKeyWarning.hidden = settings.geminiApiKey.trim() !== "";
+  // The tester supplies no key any more, so the only thing worth warning about
+  // is a build that was never configured to reach the model at all.
+  elements.apiKeyWarning.hidden = readCredentialMode() !== "unconfigured";
 
   installGrantHandler();
 

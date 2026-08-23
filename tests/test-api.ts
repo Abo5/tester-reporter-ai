@@ -99,3 +99,15 @@ export {
   normaliseLicenceState,
 } from "../src/shared/licence";
 export { looksLikeALicenceKey } from "../src/storage/licence-store";
+
+export {
+  buildLocalReport,
+  describeStepInWords,
+  buildStepsInWords,
+  describeObservedFailures,
+  describeDuration,
+  quoteValue,
+  LOCAL_REPORT_BANNER,
+} from "../src/report/local-report";
+export { readCredentialMode } from "../src/ai/credentials";
+export { buildEndpointUrl, buildRequestHeaders } from "../src/ai/gemini";

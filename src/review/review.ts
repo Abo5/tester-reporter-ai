@@ -28,6 +28,9 @@ import type {
 } from "../shared/types";
 import { getSession, updateSession, deleteSession } from "../storage/sessions";
 import { readLicenceState } from "../storage/licence-store";
+import { buildLocalReport, LOCAL_REPORT_BANNER } from "../report/local-report";
+import { readCredentialMode, UNCONFIGURED_MESSAGE } from "../ai/credentials";
+import { BUILT_IN_GEMINI_API_KEY } from "../shared/constants";
 import { mayGenerateReport, describeLicenceStatus } from "../shared/licence";
 import { readEventsForSession } from "../storage/events";
 import {
@@ -46,7 +49,11 @@ import {
   requestNeedsCostConfirmation,
 } from "../ai/bundle";
 import { generateBugReport, type GeminiOutcome } from "../ai/gemini";
-import { formatReportAsPlainText, formatReportWithMetadata } from "../ai/format";
+import {
+  formatReportAsPlainText,
+  formatReportWithMetadata,
+  formatReportWithTesterExpectation,
+} from "../ai/format";
 import {
   renderEvidenceBadges,
   renderUnverifiedClaims,
@@ -793,11 +800,19 @@ async function runReportGeneration(allowVideoUpload: boolean): Promise<void> {
     // session keeps everything they already recorded.
     const licence = await readLicenceState();
     if (!mayGenerateReport(licence)) {
-      reportStatusText.textContent = describeLicenceStatus(licence);
+      // NOT a dead end. The free tier writes the report from the recording
+      // instead of asking a model to. A tester whose trial has ended still
+      // leaves with a filled-in template rather than an empty page and a sales
+      // message, which is the difference between a lapsed trial and a lapsed
+      // customer.
+      reportStatusText.textContent =
+        describeLicenceStatus(licence) + " Writing the plain report instead…";
+      await generateLocalReportForSession(state);
       showPageError(
         describeLicenceStatus(licence)
-        + " Your video and your Playwright script are on this page and are "
-        + "unaffected. Open Settings to enter a licence key.");
+        + " The report below was written by the extension from your recording. "
+        + "The AI report reads your page code and your video and explains what "
+        + "went wrong; a licence unlocks it.");
       return;
     }
 
@@ -843,7 +858,7 @@ async function runReportGeneration(allowVideoUpload: boolean): Promise<void> {
     );
 
     const outcome: GeminiOutcome = await generateBugReport({
-      apiKey: currentSettings.geminiApiKey,
+      apiKey: BUILT_IN_GEMINI_API_KEY,
       modelId: currentSettings.modelId,
       bundle: bundle,
       videoBlob: state.media === null ? null : state.media.blob,
@@ -1142,11 +1157,12 @@ async function initialiseReviewPage(): Promise<void> {
     return;
   }
 
-  if (currentSettings.geminiApiKey.trim() === "") {
+  // A build with no AI access at all. Different from an expired licence: there
+  // is nothing the tester can buy that would fix it, so say so plainly rather
+  // than pointing them at a payment page.
+  if (readCredentialMode() === "unconfigured") {
     setupPanel.hidden = false;
-    reportStatusText.textContent =
-      "No API key is set, so no report was generated. Your video and your "
-      + "Playwright script are ready.";
+    reportStatusText.textContent = UNCONFIGURED_MESSAGE;
     reportActions.hidden = false;
     return;
   }
@@ -1273,4 +1289,47 @@ export function replaceExpectedBehaviourLine(
   }
 
   return lines.join("\n");
+}
+
+// -----------------------------------------------------------------------------
+// The free report
+//
+// See src/report/local-report.ts. It transcribes rather than diagnoses, and it
+// says so at the top of its own output.
+// -----------------------------------------------------------------------------
+
+/**
+ * Writes the plain report for a session and puts it in the textarea.
+ *
+ * WHY it reuses the same evidence assembly as the AI path: the action trace,
+ * the failures and the console errors are already selected, ordered and
+ * redacted by that code. Building a second, simpler version of it would mean
+ * two definitions of "what happened", and they would drift.
+ *
+ * The redaction gate still runs. The report never leaves the machine, so
+ * redaction is not protecting a transmission - it is making sure a password the
+ * tester typed does not end up pasted into a ticket.
+ */
+async function generateLocalReportForSession(state: LoadedSession): Promise<void> {
+  const bundle: AIEvidenceBundle = await buildBundle(state, false);
+
+  const report: GeneratedBugReport = buildLocalReport({
+    session: state.session,
+    actionTrace: bundle.actionTrace,
+    networkFailures: bundle.networkFailures,
+    consoleErrors: bundle.consoleErrors,
+  });
+
+  const body: string = formatReportWithTesterExpectation(
+    report, state.session.testerExpectedResult);
+
+  reportText.value = LOCAL_REPORT_BANNER + "\n\n" + body;
+  reportActions.hidden = false;
+
+  await updateSession(state.session.id, {
+    bugReport: report,
+    editedReportText: reportText.value,
+    status: "complete",
+    reportFailureReason: "",
+  });
 }

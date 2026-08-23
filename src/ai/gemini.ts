@@ -24,6 +24,8 @@ import type {
   GeneratedBugReport,
   RecordedEvent,
 } from "../shared/types";
+import { readCredentialMode } from "./credentials";
+import { GEMINI_PROXY_ENDPOINT } from "../shared/constants";
 import { SYSTEM_INSTRUCTION, buildEvidenceText } from "./prompt";
 import { BUG_REPORT_RESPONSE_SCHEMA } from "./schema";
 import {
@@ -370,7 +372,7 @@ function stripMarkdownFence(text: string): string {
 export async function generateBugReport(
   options: GeminiRequestOptions,
 ): Promise<GeminiOutcome> {
-  if (options.apiKey.trim() === "") {
+  if (options.apiKey.trim() === "" && readCredentialMode() === "unconfigured") {
     return { kind: "no-api-key" };
   }
   if (typeof navigator !== "undefined" && navigator.onLine === false) {
@@ -425,9 +427,12 @@ export async function generateBugReport(
     buildRequestBody(workingBundle, fileUri);
 
   // CONFIRMED working: /v1beta/models/{model}:generateContent.
-  const endpointUrl: string =
-    GEMINI_API_BASE + "/" + GEMINI_API_VERSION + "/models/"
-    + modelId + ":generateContent";
+  //
+  // With a proxy configured the request goes there instead, carrying the same
+  // body. The proxy holds the key, so nothing sensitive is compiled into the
+  // extension - see src/ai/credentials.ts for why that is the better of the two
+  // routes.
+  const endpointUrl: string = buildEndpointUrl(modelId);
 
   let lastRawText: string = "";
   let lastValidationProblems: string[] = [];
@@ -440,10 +445,7 @@ export async function generateBugReport(
       try {
         response = await fetch(endpointUrl, {
           method: "POST",
-          headers: {
-            "x-goog-api-key": options.apiKey,
-            "Content-Type": "application/json",
-          },
+          headers: buildRequestHeaders(options.apiKey),
           body: JSON.stringify(requestBody),
         });
       } catch (networkError: unknown) {
@@ -627,4 +629,34 @@ export async function generateBugReport(
       void deleteUploadedFile(options.apiKey, fileUri);
     }
   }
+}
+
+/**
+ * Where the request goes: the proxy if there is one, Gemini directly if not.
+ */
+export function buildEndpointUrl(modelId: string): string {
+  if (GEMINI_PROXY_ENDPOINT.trim() !== "") {
+    return GEMINI_PROXY_ENDPOINT;
+  }
+  return GEMINI_API_BASE + "/" + GEMINI_API_VERSION + "/models/"
+    + modelId + ":generateContent";
+}
+
+/**
+ * The headers for that request.
+ *
+ * WHY the key is omitted entirely on the proxy path rather than sent and
+ * ignored: a header that is not needed is a credential that can leak from a
+ * log, a proxy misconfiguration, or a redirect. The extension should not be
+ * carrying a key it is not using.
+ */
+export function buildRequestHeaders(apiKey: string): Record<string, string> {
+  if (GEMINI_PROXY_ENDPOINT.trim() !== "") {
+    return { "Content-Type": "application/json" };
+  }
+
+  return {
+    "x-goog-api-key": apiKey,
+    "Content-Type": "application/json",
+  };
 }

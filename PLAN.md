@@ -8667,3 +8667,103 @@ reading the page.
 3. **A grace period for network failures.** Already half-built:
    `verifyLicenceKey` treats an unreachable server as "not verified now" rather
    than "invalid", and says so. Decide how many days offline is too many.
+
+
+---
+
+## 25. Two tiers, and where the key lives
+
+### 25.1 What each tier gets
+
+| | Free (and after the trial) | Paid |
+|---|---|---|
+| Recording, video, Playwright script | ✅ | ✅ |
+| Report | **written by the extension** from the recording | **written by the model** from the page code, the video and the script |
+| What it can say | what was observed | what went wrong, and why |
+| Works offline | ✅ | ✗ |
+
+The free report is `src/report/local-report.ts`. It fills the same six-field
+template from the action trace, the network failures and the console errors.
+Every sentence in it restates something recorded.
+
+**It transcribes; it does not diagnose.** It cannot tell a defect from intended
+behaviour, and it will not guess: with no failure captured its title is
+"Recorded session on X", not "Failure in X". Its own first line says which
+report it is, because the two tiers share six headings and a reader who does not
+know which one they have will read a transcript as an analysis.
+
+That is still most of the work. The half hour a tester spends on a bug report is
+mostly transcription — the exact steps, the exact values, the exact URL, the
+timestamps. The free tier does that in milliseconds, offline. What is left is
+the judgement, which is the part they were always better at.
+
+### 25.2 The key, and why it should not be in the extension
+
+The tester no longer supplies an API key; the API-key section is gone from the
+options page. There are two ways to give them access, and the difference between
+them is money.
+
+**`BUILT_IN_GEMINI_API_KEY` — a key compiled into the extension.**
+
+A key here is a **published** key. A Chrome extension is unpacked JavaScript on
+every customer's disk: anyone who installs it can open the folder, or the bundle
+in DevTools, and read the string in about ten seconds. It is not obfuscatable in
+any meaningful sense — a value the program must send has to exist in the
+program.
+
+The bill is yours, it has no per-user ceiling, and the first sign of trouble is
+usually the invoice. If you ship one: put a hard quota on it in AI Studio, keep
+it separate from every other key you own, and be ready to rotate it.
+
+**`GEMINI_PROXY_ENDPOINT` — your server holds the key.**
+
+Same experience for the customer, who still enters nothing. The key never leaves
+your machine. And it can do something the compiled-in key structurally cannot:
+**refuse a request from an expired licence before it costs you a token.** With
+the key in the extension, by the time you could refuse, the request has already
+been made with your credentials.
+
+You already need a server for licences (section 24). This is the same server.
+
+The repository ships both constants **empty**, and that is not an oversight: a
+key committed here would be a key on GitHub. The options page says the build has
+no AI access configured, and the free report still works.
+
+⚠️ **VERIFY: the proxy is a DESIGN.** `buildEndpointUrl` and
+`buildRequestHeaders` route to it and omit the key header when it is set, and
+that much is typechecked and unit-tested. No proxy has been built or run.
+
+### 25.2b How the credential gets into a build
+
+Neither constant is edited by hand. `scripts/build.mjs` substitutes them from
+the environment at build time:
+
+```
+GEMINI_PROXY_ENDPOINT=https://your-server/gemini  npm run build   # preferred
+GEMINI_API_KEY=AIza...                            npm run build   # published key
+npm run build                                                     # no AI; free tier only
+```
+
+`npm run build` reads `.env` through Node's own `--env-file-if-exists`, so a
+developer with a key in `.env` gets a working build without doing anything, and
+the AI end-to-end tests run against the real model.
+
+The build **says which of the three it did**, and when it compiles a key in it
+says what that means:
+
+```
+  AI access: a key is COMPILED INTO THIS BUILD.
+             It is readable by anyone who installs it, and
+             the bill is yours. Set GEMINI_PROXY_ENDPOINT
+             instead to keep the key on your own server.
+```
+
+A warning nobody sees is not a warning. `dist/` is gitignored, so a baked key
+never reaches the repository.
+
+### 25.3 What the tiering does NOT do
+
+It does not stop anyone reading the extension's source and calling Gemini
+themselves with the compiled-in key. Nothing client-side can. If that matters —
+and with your own key it does — the proxy is not the better option, it is the
+only one.

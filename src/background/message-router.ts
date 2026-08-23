@@ -885,12 +885,84 @@ export async function handleToggleRecordingCommand(
     return;
   }
 
+  // ASK FOR THE SITE NOW, while the tester is standing here.
+  //
+  // WHY it moved from Settings to this moment: the extension ships with no page
+  // access, and without it a recording captures the video and the page
+  // addresses and NOTHING the tester types or clicks. The side panel warned
+  // about that, and three sessions in a row were still recorded ungranted -
+  // because a tester using a keyboard shortcut never opens the side panel.
+  //
+  // A warning nobody reads is not a fix. Asking at the moment of the action is.
+  //
+  // Measured, because it is not obvious: chrome.permissions.request() DOES
+  // resolve from inside a chrome.commands handler - the invocation counts as
+  // the user gesture it requires. It is called before any other await, since a
+  // gesture does not necessarily survive one.
+  await requestSiteAccessIfNeeded(tabId);
+
   const settings = await readSettings();
   try {
     await handleStartRecording(tabId, settings.captureMicrophone);
   } catch (startError: unknown) {
     await reportError("router", startError);
   }
+}
+
+/**
+ * Asks Chrome for access to this tab's origin, if we do not already have it.
+ *
+ * Declining is a perfectly good answer: recording continues on the activeTab
+ * fallback, and the session records why it is degraded. This asks once per
+ * origin - Chrome does not re-prompt for something already granted, and a
+ * refusal is not remembered, so a tester who says no today can say yes
+ * tomorrow simply by pressing Record again.
+ */
+async function requestSiteAccessIfNeeded(tabId: number): Promise<void> {
+  let tabUrl: string = "";
+  try {
+    const tab: chrome.tabs.Tab = await chrome.tabs.get(tabId);
+    tabUrl = tab.url ?? "";
+  } catch (tabError: unknown) {
+    return;
+  }
+
+  const pattern: string = originPatternForUrl(tabUrl);
+  if (pattern === "") {
+    return;   // chrome:// and friends: nothing to ask for.
+  }
+
+  const alreadyGranted: boolean =
+    await chrome.permissions.contains({ origins: [pattern] });
+  if (alreadyGranted) {
+    return;
+  }
+
+  try {
+    const granted: boolean = await chrome.permissions.request({ origins: [pattern] });
+    logInfo("router", "Site access for " + pattern + ": "
+      + (granted ? "granted" : "declined"));
+  } catch (requestError: unknown) {
+    // No gesture, or the browser refused to ask. The fallback still records.
+    logWarning("router",
+      "Could not ask for site access; recording will be limited.", requestError);
+  }
+}
+
+/** The origin pattern for a tab URL, or "" when there is nothing to grant. */
+export function originPatternForUrl(tabUrl: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(tabUrl);
+  } catch (parseError: unknown) {
+    return "";
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return "";
+  }
+
+  return parsed.protocol + "//" + parsed.hostname + "/*";
 }
 
 /**

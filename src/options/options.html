@@ -34,21 +34,14 @@
         <p id="licence-buy-note" class="hint"></p>
       </section>
 
+      <!--
+        The Gemini API key section used to live here. Testers no longer supply
+        a key: the build carries its own access, or routes through a proxy. See
+        src/ai/credentials.ts.
+      -->
       <section class="card">
-        <h2>Gemini API key</h2>
-        <p class="hint">
-          Get a key from Google AI Studio. It is stored on this machine only, in the
-          extension's local storage, and is sent only to Google's API.
-          <strong>It is not encrypted</strong> — anyone with access to this browser
-          profile can read it. Use a key scoped to this purpose and revoke it if the
-          machine changes hands.
-        </p>
-        <div class="field-row">
-          <input type="password" id="api-key-input" placeholder="AIza…" autocomplete="off" />
-          <button type="button" id="toggle-key-button" class="secondary">Show</button>
-          <button type="button" id="forget-key-button" class="secondary">Forget key</button>
-        </div>
-        <p id="api-key-status" class="status-line"></p>
+        <h2>AI access</h2>
+        <p id="ai-access-line" class="status-line">Checking…</p>
       </section>
 
       <section class="card">

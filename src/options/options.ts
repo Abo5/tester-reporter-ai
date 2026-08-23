@@ -12,6 +12,8 @@
 // =============================================================================
 
 import type { ExtensionSettings } from "../shared/types";
+import type { CredentialMode } from "../ai/credentials";
+import { readCredentialMode, UNCONFIGURED_MESSAGE } from "../ai/credentials";
 import type { LicenceState } from "../shared/licence";
 import { describeLicenceStatus } from "../shared/licence";
 import {
@@ -26,7 +28,6 @@ import {
 import {
   readSettings,
   writeSettings,
-  forgetApiKey,
   asReportLanguage,
 } from "../storage/settings";
 import { readQuotaStatus, type QuotaStatus } from "../storage/media";
@@ -46,10 +47,7 @@ function requireElement<T extends HTMLElement>(elementId: string): T {
   return element as T;
 }
 
-const apiKeyInput = requireElement<HTMLInputElement>("api-key-input");
-const toggleKeyButton = requireElement<HTMLButtonElement>("toggle-key-button");
-const forgetKeyButton = requireElement<HTMLButtonElement>("forget-key-button");
-const apiKeyStatus = requireElement<HTMLElement>("api-key-status");
+const aiAccessLine = requireElement<HTMLElement>("ai-access-line");
 const modelSelect = requireElement<HTMLSelectElement>("model-select");
 const languageSelect = requireElement<HTMLSelectElement>("language-select");
 const enableMicrophoneButton =
@@ -98,17 +96,31 @@ function renderModelOptions(selectedModelId: string): void {
   }
 }
 
-/** Describes whether a key is present, without ever showing it by accident. */
-function renderApiKeyStatus(key: string): void {
-  if (key.trim() === "") {
-    apiKeyStatus.textContent =
-      "No key set. Recording still works — you will get the video and the "
-      + "Playwright script, just not the written report.";
+/**
+ * Says how this build reaches the model, without ever showing a credential.
+ *
+ * WHY the tester is told at all, when they can do nothing about it: when the
+ * written report stops working they need to know whether it is their licence,
+ * their network, or a build that was never configured. Three causes with one
+ * symptom is the worst kind of support call.
+ */
+function renderAiAccess(): void {
+  const mode: CredentialMode = readCredentialMode();
+
+  if (mode === "proxy") {
+    aiAccessLine.textContent =
+      "AI reports are available through this build. You do not need to supply "
+      + "an API key.";
     return;
   }
-  const visibleTail: string = key.slice(Math.max(0, key.length - 4));
-  apiKeyStatus.textContent =
-    "A key ending in …" + visibleTail + " is stored on this machine.";
+  if (mode === "built-in-key") {
+    aiAccessLine.textContent =
+      "AI reports are available through this build. You do not need to supply "
+      + "an API key.";
+    return;
+  }
+
+  aiAccessLine.textContent = UNCONFIGURED_MESSAGE;
 }
 
 /** Reports whether the microphone permission has already been granted. */
@@ -203,34 +215,6 @@ function renderUsage(settings: ExtensionSettings): void {
 // Handlers
 // -----------------------------------------------------------------------------
 
-/** Persists the API key as it is typed, debounced by the blur event. */
-function installApiKeyHandlers(): void {
-  apiKeyInput.addEventListener("change", function onKeyChange(): void {
-    const key: string = apiKeyInput.value.trim();
-    void writeSettings({ geminiApiKey: key }).then(function afterWrite(): void {
-      renderApiKeyStatus(key);
-      flashSaved();
-    });
-  });
-
-  toggleKeyButton.addEventListener("click", function onToggle(): void {
-    if (apiKeyInput.type === "password") {
-      apiKeyInput.type = "text";
-      toggleKeyButton.textContent = "Hide";
-    } else {
-      apiKeyInput.type = "password";
-      toggleKeyButton.textContent = "Show";
-    }
-  });
-
-  forgetKeyButton.addEventListener("click", function onForget(): void {
-    void forgetApiKey().then(function afterForget(): void {
-      apiKeyInput.value = "";
-      renderApiKeyStatus("");
-      flashSaved();
-    });
-  });
-}
 
 /**
  * Requests the microphone permission from this page.
@@ -357,8 +341,7 @@ function installRemainingHandlers(): void {
 async function initialiseOptions(): Promise<void> {
   const settings: ExtensionSettings = await readSettings();
 
-  apiKeyInput.value = settings.geminiApiKey;
-  renderApiKeyStatus(settings.geminiApiKey);
+  renderAiAccess();
   renderModelOptions(settings.modelId);
   languageSelect.value = settings.reportLanguage;
   captureTabAudio.checked = settings.captureTabAudio;
@@ -376,7 +359,6 @@ async function initialiseOptions(): Promise<void> {
     consentStatus.classList.remove("ok");
   }
 
-  installApiKeyHandlers();
   installRemainingHandlers();
 
   await renderMicrophoneStatus();
@@ -384,7 +366,7 @@ async function initialiseOptions(): Promise<void> {
 }
 
 initialiseOptions().catch(function onInitError(initError: unknown): void {
-  apiKeyStatus.textContent = "Settings failed to load: " + String(initError);
+  aiAccessLine.textContent = "Settings failed to load: " + String(initError);
 });
 
 // -----------------------------------------------------------------------------
