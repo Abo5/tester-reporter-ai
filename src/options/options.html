@@ -10,6 +10,30 @@
     <main class="page">
       <h1>Tester-Reporter-AI settings</h1>
 
+      <section class="card" id="licence-card">
+        <h2>Licence</h2>
+        <p id="licence-status" class="status-line"><strong>Checking…</strong></p>
+        <p class="explain">
+          Recording, the video and the Playwright script work forever, trial or
+          not. The AI-written report is the part a licence pays for.
+        </p>
+
+        <div class="row">
+          <input type="text" id="licence-input" placeholder="Licence key"
+                 autocomplete="off" />
+          <button type="button" id="licence-verify-button">Verify</button>
+        </div>
+        <p id="licence-message" class="status-line"></p>
+
+        <div class="row">
+          <button type="button" id="licence-buy-button" class="primary">
+            Buy a licence
+          </button>
+          <span id="licence-price" class="status-chip"></span>
+        </div>
+        <p id="licence-buy-note" class="hint"></p>
+      </section>
+
       <section class="card">
         <h2>Gemini API key</h2>
         <p class="hint">

@@ -333,3 +333,19 @@ label[for="note-input"] {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* The trial line. Quiet while there is time left, loud once there is not. */
+.trial-line {
+  margin: 0 0 10px 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--surface-alt, rgba(127, 127, 127, 0.10));
+  color: var(--text-muted, #5c6270);
+}
+
+.trial-line.trial-over {
+  background: var(--warning-background, #fff4e0);
+  border: 1px solid var(--warning-border, #e0a83c);
+  color: var(--text, #1a1c20);
+}

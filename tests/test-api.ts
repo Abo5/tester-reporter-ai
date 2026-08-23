@@ -87,3 +87,15 @@ export { NOT_DETERMINABLE_SENTENCE, SUPPORTED_MODELS, MAX_SNAPSHOT_CHARACTERS }
 
 export { normaliseSession } from "../src/storage/sessions";
 export { normaliseEvent } from "../src/storage/events";
+
+export {
+  createInitialLicenceState,
+  advanceClock,
+  trialDaysUsed,
+  trialDaysRemaining,
+  readLicenceStatus,
+  describeLicenceStatus,
+  mayGenerateReport,
+  normaliseLicenceState,
+} from "../src/shared/licence";
+export { looksLikeALicenceKey } from "../src/storage/licence-store";

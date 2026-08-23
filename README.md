@@ -246,6 +246,34 @@ Pointer movement is sampled rather than recorded raw. A browser reports it at
 the display refresh rate, which would be hundreds of thousands of entries nobody
 reads. The sample keeps the shape, which is the part that means something.
 
+## Licence and trial
+
+**14 days from install, free.** After that the AI report needs a licence.
+Recording, the video and the generated Playwright script keep working — a tester
+whose trial runs out mid-session keeps everything they recorded.
+
+The side panel names the days left every session, so nobody is cut off by
+surprise.
+
+**What this enforcement is worth, stated plainly.** It runs on the customer's
+machine, in an extension whose source they can read. It is a speed bump, not a
+lock: clearing storage or reloading an edited `dist/` resets it. What it does do
+is keep an honest customer informed, defeat an accidental extension (a clock set
+backwards is caught by a high-water mark), and put the paid state behind a key
+that a server can validate the moment one exists.
+
+**Before you sell it**, three fields in `src/shared/constants.ts`:
+
+| Constant | What goes in it |
+|---|---|
+| `PAYPAL_CHECKOUT_URL` | your PayPal payment link — empty in this build, and the Buy button says so |
+| `LICENCE_PRICE_DISPLAY` | the price, shown next to the button |
+| `LICENCE_VERIFY_ENDPOINT` | your verify server — until it is set, key checking is local and the options page says that in those words |
+
+The payment link is deliberately not filled in. A payment URL is an account
+number, and a wrong one sends money to a stranger without anything looking
+broken. PLAN.md section 24 has the server contract and the PayPal steps.
+
 ## Permissions, honestly
 
 **The install prompt asks for no site access at all.** The extension can reach

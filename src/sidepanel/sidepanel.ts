@@ -9,6 +9,9 @@
 // =============================================================================
 
 import type { SessionStatus, RecordingSession } from "../shared/types";
+import type { LicenceState, LicenceStatus } from "../shared/licence";
+import { readLicenceStatus, describeLicenceStatus } from "../shared/licence";
+import { readLicenceState } from "../storage/licence-store";
 import { asExtensionMessage, sendMessageIgnoringNoReceiver } from "../shared/messages";
 import { listSessions } from "../storage/sessions";
 import { readSettings, writeSettings } from "../storage/settings";
@@ -26,6 +29,7 @@ interface PanelElements {
   countFailures: HTMLElement;
   countErrors: HTMLElement;
   errorBox: HTMLElement;
+  trialLine: HTMLElement;
   lastAction: HTMLElement;
   grantCard: HTMLElement;
   grantBody: HTMLElement;
@@ -72,6 +76,7 @@ function collectElements(): PanelElements {
     countFailures: requireElement("count-failures"),
     countErrors: requireElement("count-errors"),
     errorBox: requireElement("error-box"),
+    trialLine: requireElement("trial-line"),
     lastAction: requireElement("last-action"),
     grantCard: requireElement("grant-card"),
     grantBody: requireElement("grant-body"),
@@ -438,6 +443,7 @@ async function initialisePanel(): Promise<void> {
 
   renderStatus("idle", 0, 0, 0, 0, "", "");
   await renderGrantWarning();
+  await renderTrialLine();
   await renderSessionList();
   await renderStorageWarning();
   await sendMessageIgnoringNoReceiver({ kind: "ui/get-status" });
@@ -545,4 +551,31 @@ function installGrantHandler(): void {
   chrome.permissions.onRemoved.addListener(function onRemoved(): void {
     void renderGrantWarning();
   });
+}
+
+/**
+ * Shows where the trial stands, in the place the tester already looks.
+ *
+ * WHY here and not only in Settings: nobody opens Settings. The panel is open
+ * during every session, and a customer who is told on day 12 that they have two
+ * days left can decide; one who finds out on day 15 that the report button
+ * stopped working has been ambushed.
+ */
+async function renderTrialLine(): Promise<void> {
+  const state: LicenceState = await readLicenceState();
+  const status: LicenceStatus = readLicenceStatus(state);
+
+  if (status === "licensed") {
+    elements.trialLine.hidden = true;
+    return;
+  }
+
+  elements.trialLine.hidden = false;
+  elements.trialLine.textContent = describeLicenceStatus(state);
+
+  if (status === "trial-expired" || status === "licence-invalid") {
+    elements.trialLine.classList.add("trial-over");
+  } else {
+    elements.trialLine.classList.remove("trial-over");
+  }
 }

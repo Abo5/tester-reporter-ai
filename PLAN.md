@@ -46,9 +46,9 @@ been run, and they are settled.
 | V2 | `generateContent` endpoint path and request body shape | Gemini API reference | ✅ **CONFIRMED** by live test |
 | V3 | Exact parameter names for structured JSON output (`responseMimeType` + `responseSchema` under `generationConfig`) | Gemini API structured-output docs | ✅ **CONFIRMED** by live test |
 | V4 | Parameter name for thinking / reasoning level, and whether this model has one | Gemini API docs | ⬜ still open |
-| V5 | Supported video MIME types and max duration | Gemini API video docs | ✅ **CONFIRMED** — a real `video/mp4;codecs=vp9,opus` recording was accepted and analysed |
+| V5 | Supported video MIME types and max duration | Gemini API video docs | ✅ **CONFIRMED** — a real `video/mp4;codecs=vp9,opus` recording was accepted and analysed. The documented list (mp4, mpeg, mov, avi, x-flv, mpg, **webm**, wmv, 3gpp) is now in `SUPPORTED_VIDEO_MIME_TYPES`, and the duration limit is **1 hour** at default media resolution. |
 | V6 | Inline base64 threshold vs. Files API, and the upload flow | Gemini API files docs | ✅ **CONFIRMED** — inline works; the resumable upload of a real browser recording reaches ACTIVE, is readable by `file_uri`, and deletes. Retention window still unread. |
-| V7 | Current price per 1M input tokens, per 1M output tokens, and how video seconds are tokenised | Gemini API pricing page | ⬜ still open |
+| V7 | Current price per 1M input tokens, per 1M output tokens, and how video seconds are tokenised | Gemini API pricing page | ✅ **ANSWERED** — `gemini-3.5-flash` is $1.50 / $9.00 per 1M in/out; video is ~300 tokens per second at default media resolution, images 258 tokens per 768×768 tile. Constants sourced, and the cost dialog now shows money. |
 | V8 | `chrome.offscreen` reason enum values (`USER_MEDIA`, `DISPLAY_MEDIA`, `BLOBS`, …) | Chrome offscreen API docs | ✅ **CONFIRMED** — offscreen document created successfully under test |
 | V9 | `chrome.tabCapture.getMediaStreamId()` signature + the `getUserMedia` constraint shape used to consume the stream ID | Chrome tabCapture docs + offscreen recording sample | ✅ **ANSWERED** — requires prior invocation (activeTab); host permissions do not satisfy it. A keyboard command counts as an invocation, and the constraint shape is confirmed working up to the compositor. |
 | V10 | Whether a microphone permission prompt can be raised from an offscreen document | Chrome offscreen / permissions docs | ⬜ still open — this machine reports **zero** `audioinput` devices, so the question cannot be answered here |
@@ -58,6 +58,7 @@ been run, and they are settled.
 | V14 | Whether `chrome.webRequest` (non-blocking) still reports `statusCode` in `onCompleted`/`onErrorOccurred` in MV3 with only host permissions | Chrome webRequest docs | ✅ **CONFIRMED** — webRequest reports statusCode 500 under MV3 with host permissions |
 | V15 | Whether `fetch()` to `generativelanguage.googleapis.com` from an MV3 service worker needs the host in `host_permissions` (I assume yes) | Chrome CORS-for-extensions docs | ✅ **CONFIRMED** — fetch to generativelanguage.googleapis.com works from the extension |
 | V16 | Whether a static `content_scripts` entry with `<all_urls>` matches forces the broad host grant even when the host permission is optional | Measure it on a fresh profile | ✅ **ANSWERED — yes, it does.** The static entries were deleted; the scripts are registered at run time for granted origins only. See 13.3. |
+| V17 | The per-image token cost, for the key-frame fallback | Gemini API image docs | ✅ **ANSWERED** — 258 tokens for images ≤384px, otherwise 258 per 768×768 tile. A 1280×720 key frame is 6 tiles = **1,548 tokens**; the old placeholder of 300 understated the key-frame path fivefold. |
 
 ---
 
@@ -8537,3 +8538,132 @@ cannot be answered here: this machine reports **zero** `audioinput` devices. The
 degrades correctly — the microphone is optional and its absence leaves a silent video
 rather than cancelling the session — but the grant question needs a machine with a
 microphone.
+
+
+---
+
+## 24. The trial, the licence, and getting paid
+
+### 24.1 What is built, and what it is worth
+
+A 14-day trial, counted from install, with the AI report gated behind it. The
+video, the recording and the generated Playwright script keep working forever.
+
+**Say the limitation out loud, because it decides everything else.** All of this
+runs on the customer's machine, in an extension whose source they can read. A
+trial enforced there is a **speed bump, not a lock**. Someone who wants to
+bypass it can clear `chrome.storage.local`, edit `dist/` and reload the unpacked
+extension, or use a fresh profile. Obfuscation does not change that; it only
+makes the code harder for you to maintain.
+
+What the layer does achieve, and it is worth having:
+
+- an honest customer always knows where they stand and when to pay;
+- the trial cannot be extended **by accident** — a clock set backwards is
+  defeated by the high-water mark, and a settings reset does not clear it;
+- the paid state is a key checked against `LICENCE_VERIFY_ENDPOINT`, so the day
+  a server exists the enforcement becomes real with **no change to the UI, the
+  storage shape, or the gate**.
+
+Until that endpoint is set, the verification is a shape test on the customer's
+own machine, and the options page says so in those words. A product that
+reports a local shape test as "verified" is lying to its own operator about how
+much revenue it is protecting.
+
+### 24.2 Why a backend, now
+
+Section 0.3 justified having no backend in v1. That reasoning held while the
+extension only ever talked to the customer's own Gemini key: no server meant no
+data custody, no uptime obligation, and nothing to breach.
+
+**Selling licences changes the calculation, and only for licences.** The
+evidence still never leaves the customer's machine except to Gemini. The server
+does one thing:
+
+> given a licence key, say whether it is valid.
+
+That is the smallest backend that makes a paywall real. It holds no session
+data, no video, no page code, and no personal data beyond what PayPal already
+gave you.
+
+### 24.3 The server contract
+
+`LICENCE_VERIFY_ENDPOINT` receives:
+
+```json
+POST /verify
+{ "licenceKey": "TRA-4F2A-9C31-88BE" }
+```
+
+and must answer:
+
+```json
+{ "valid": true,  "message": "Licence verified." }
+{ "valid": false, "message": "This licence was refunded." }
+```
+
+`message` is shown to the customer verbatim, so write it for them.
+
+⚠️ **VERIFY: this contract is a DESIGN. Nothing has been built or tested against
+it.** The client half is written and typechecked; there is no server, so no
+request has ever succeeded. Treat every claim in this section as a proposal
+until you have run it.
+
+Three things worth deciding before you build it:
+
+1. **Bind the key to something.** A key with no binding is one a customer can
+   post publicly. Binding to the email PayPal gives you is the least intrusive
+   option that works.
+2. **Cache the verdict.** `licenceVerifiedAtMs` already exists for this. A
+   customer on a plane should not lose the product; re-verify on a schedule,
+   not on every report.
+3. **Decide what a refund does.** The endpoint can answer `valid: false` after a
+   refund, and the extension will fall back to the trial state on the next
+   check.
+
+### 24.4 PayPal
+
+**I have not filled in the payment link, and it is deliberate.**
+`PAYPAL_CHECKOUT_URL` and `LICENCE_PRICE_DISPLAY` are empty strings, and the
+options page disables the Buy button and says the build has no payment link
+configured.
+
+A payment URL is an account number. Guessing one sends money to the wrong place
+or nowhere at all, and neither failure announces itself — the customer sees a
+normal PayPal page and pays a stranger. That is not a mistake worth risking to
+save one field.
+
+To fill it in:
+
+1. Create the product in your PayPal account and generate a payment link (a
+   PayPal.Me link, a Smart Payment Button, or a Subscription plan — whichever
+   suits how you want to charge).
+2. Put that URL in `PAYPAL_CHECKOUT_URL` in `src/shared/constants.ts`.
+3. Put the price in `LICENCE_PRICE_DISPLAY` — it is shown next to the button so
+   the customer knows what they are buying before they click.
+4. Rebuild.
+
+⚠️ **VERIFY against PayPal's own documentation** which link type you need. I
+have not confirmed PayPal's current product names, their fee structure, or
+whether your account type supports the flow you want, and I will not guess at
+any of them.
+
+**Chrome Web Store policy.** Google no longer operates a payment system for
+extensions; developers use their own processor, subject to the Developer
+Program Policies — which require you to be transparent about pricing and
+monetisation. External licence keys and time-limited trials are an ordinary,
+permitted model.
+⚠️ **VERIFY the current policy text before you publish**; the enforcement dates
+and wording change, and a listing taken down for a policy detail costs more than
+reading the page.
+
+### 24.5 What to build next, in order
+
+1. **The verify endpoint.** Everything else is decoration until a server the
+   customer does not control says yes or no.
+2. **Key issuance on payment.** A PayPal webhook that generates a key and emails
+   it. Until this exists you are issuing keys by hand, which is fine for the
+   first ten customers and unbearable at fifty.
+3. **A grace period for network failures.** Already half-built:
+   `verifyLicenceKey` treats an unreachable server as "not verified now" rather
+   than "invalid", and says so. Decide how many days offline is too many.

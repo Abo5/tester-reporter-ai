@@ -36,6 +36,7 @@ import {
   ESTIMATED_CHARACTERS_PER_TOKEN,
   ESTIMATED_VIDEO_TOKENS_PER_SECOND,
   CONFIRM_ABOVE_ESTIMATED_TOKENS,
+  INPUT_PRICE_PER_MILLION_TOKENS_USD,
   ESTIMATED_TOKENS_PER_KEY_FRAME,
   FAILURE_ATTRIBUTION_WINDOW_MS,
 } from "../shared/constants";
@@ -348,9 +349,12 @@ export function findFailureEventIndexes(
  * Rough token estimate. Explicitly an ESTIMATE, used only to warn the tester
  * before an expensive call and to decide whether to truncate further.
  *
- * VERIFY the video token rate against the pricing documentation. And note that
- * ARABIC TEXT TOKENISES CONSIDERABLY WORSE than English — closer to two
- * characters per token than four — so this underestimates Arabic-heavy pages.
+ * The video and image rates are now taken from the official documentation
+ * rather than guessed - see ESTIMATED_VIDEO_TOKENS_PER_SECOND and
+ * ESTIMATED_TOKENS_PER_KEY_FRAME. What remains an estimate is the TEXT, and one
+ * bias is worth knowing: ARABIC TOKENISES CONSIDERABLY WORSE than English -
+ * closer to two characters per token than four - so this underestimates
+ * Arabic-heavy pages, and the cost shown for them is low rather than high.
  */
 export function estimateInputTokens(bundle: AIEvidenceBundle): number {
   let textCharacters: number = 0;
@@ -608,14 +612,34 @@ export async function buildEvidenceBundle(
 }
 
 /**
- * The sentence shown to the tester before a request is sent, naming the cost.
- *
  * WHAT: turns an evidence bundle into one plain sentence about what it will
- * cost to send, in tokens and in what the tokens are made of.
+ * cost to send, in tokens, in money, and in what the tokens are made of.
  * WHY it is here and not in the review page: the review page is one caller. The
  * side panel could send too, and the wording of a spending warning should not
  * be duplicated - two copies drift, and the one that drifts is the one nobody
  * is looking at.
+ */
+export function estimateRequestCostUsd(estimatedInputTokens: number): number {
+  return (estimatedInputTokens / 1000000) * INPUT_PRICE_PER_MILLION_TOKENS_USD;
+}
+
+/**
+ * The cost as money, or "" when it rounds to nothing worth saying.
+ *
+ * WHY money and not only tokens: "145,000 tokens" means nothing to a tester
+ * deciding whether to press the button. "About $0.22" does. The token count
+ * stays next to it because it is the figure that does not go stale.
+ */
+export function formatRequestCostUsd(estimatedInputTokens: number): string {
+  const dollars: number = estimateRequestCostUsd(estimatedInputTokens);
+  if (dollars < 0.01) {
+    return "under a cent";
+  }
+  return "about $" + dollars.toFixed(2);
+}
+
+/**
+ * The sentence shown to the tester before a request is sent, naming the cost.
  */
 export function describeRequestCost(bundle: AIEvidenceBundle): string {
   const tokenText: string = bundle.estimatedInputTokens.toLocaleString();
@@ -631,7 +655,9 @@ export function describeRequestCost(bundle: AIEvidenceBundle): string {
       + "-second video";
   }
   return "This will send about " + tokenText
-    + " tokens of evidence, including " + videoText + ".";
+    + " tokens of evidence, including " + videoText + ". That is "
+    + formatRequestCostUsd(bundle.estimatedInputTokens)
+    + " at the current input price.";
 }
 
 /**

@@ -12,6 +12,17 @@
 // =============================================================================
 
 import type { ExtensionSettings } from "../shared/types";
+import type { LicenceState } from "../shared/licence";
+import { describeLicenceStatus } from "../shared/licence";
+import {
+  readLicenceState,
+  verifyLicenceKey,
+  recordVerification,
+} from "../storage/licence-store";
+import {
+  PAYPAL_CHECKOUT_URL,
+  LICENCE_PRICE_DISPLAY,
+} from "../shared/constants";
 import {
   readSettings,
   writeSettings,
@@ -501,3 +512,90 @@ function installSiteAccessSection(): void {
 }
 
 installSiteAccessSection();
+
+// -----------------------------------------------------------------------------
+// Licence
+//
+// Read src/shared/licence.ts before changing anything here. The short version:
+// this UI is honest about a trial it cannot actually enforce, and the honesty
+// is the point. It never tells a customer their key was "verified" when no
+// server verified anything.
+// -----------------------------------------------------------------------------
+
+/** Draws the current trial or licence state. */
+async function renderLicence(): Promise<void> {
+  const status = document.getElementById("licence-status") as HTMLElement;
+  const message = document.getElementById("licence-message") as HTMLElement;
+  const input = document.getElementById("licence-input") as HTMLInputElement;
+  const price = document.getElementById("licence-price") as HTMLElement;
+  const buyNote = document.getElementById("licence-buy-note") as HTMLElement;
+  const buyButton = document.getElementById("licence-buy-button") as HTMLButtonElement;
+
+  const state: LicenceState = await readLicenceState();
+
+  status.textContent = describeLicenceStatus(state);
+  message.textContent = state.lastVerificationMessage;
+  input.value = state.licenceKey;
+
+  if (LICENCE_PRICE_DISPLAY !== "") {
+    price.textContent = LICENCE_PRICE_DISPLAY;
+    price.hidden = false;
+  } else {
+    price.hidden = true;
+  }
+
+  // No payment link configured. Saying so beats a button that goes nowhere.
+  if (PAYPAL_CHECKOUT_URL === "") {
+    buyButton.disabled = true;
+    buyNote.textContent =
+      "No payment link is configured in this build. Set PAYPAL_CHECKOUT_URL in "
+      + "src/shared/constants.ts to your own PayPal link before distributing "
+      + "it.";
+    return;
+  }
+
+  buyButton.disabled = false;
+  buyNote.textContent =
+    "Opens PayPal in a new tab. Your licence key is emailed to you after "
+    + "payment; paste it above and press Verify.";
+}
+
+/** Wires the Verify and Buy buttons. */
+function installLicenceHandlers(): void {
+  const input = document.getElementById("licence-input") as HTMLInputElement;
+  const verifyButton =
+    document.getElementById("licence-verify-button") as HTMLButtonElement;
+  const buyButton =
+    document.getElementById("licence-buy-button") as HTMLButtonElement;
+  const message = document.getElementById("licence-message") as HTMLElement;
+
+  verifyButton.addEventListener("click", function onVerify(): void {
+    verifyButton.disabled = true;
+    message.textContent = "Checking…";
+
+    void verifyLicenceKey(input.value)
+      .then(function afterVerify(outcome): Promise<void> {
+        return recordVerification(input.value, outcome).then(
+          function afterRecord(): Promise<void> {
+            return renderLicence();
+          });
+      })
+      .catch(function onVerifyError(verifyError: unknown): void {
+        message.textContent = "Verification failed: " + String(verifyError);
+      })
+      .finally(function reEnable(): void {
+        verifyButton.disabled = false;
+      });
+  });
+
+  buyButton.addEventListener("click", function onBuy(): void {
+    if (PAYPAL_CHECKOUT_URL === "") {
+      return;
+    }
+    void chrome.tabs.create({ url: PAYPAL_CHECKOUT_URL });
+  });
+
+  void renderLicence();
+}
+
+installLicenceHandlers();

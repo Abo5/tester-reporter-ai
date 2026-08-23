@@ -18,6 +18,7 @@ import { installNavigationListeners } from "./navigation-listener";
 import { installNetworkListeners } from "./network-listener";
 import { logInfo, logWarning } from "../shared/logger";
 import { syncRegisteredContentScripts } from "./content-script-registration";
+import { ensureTrialStarted } from "../storage/licence-store";
 
 /**
  * Opens the side panel ourselves when the toolbar icon is clicked.
@@ -126,6 +127,10 @@ function initialiseServiceWorker(): void {
 
   chrome.runtime.onInstalled.addListener(function onInstalled(): void {
     logInfo("worker", "Extension installed or updated.");
+    // Starts the clock on the trial the moment the extension is installed,
+    // rather than on the first recording. A customer who installs it and comes
+    // back a fortnight later has had their fortnight.
+    void ensureTrialStarted();
     void syncRegisteredContentScripts();
     void reconcileStuckSessions()
       .then(runRetentionCleanup)

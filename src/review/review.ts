@@ -27,6 +27,8 @@ import type {
   ExtensionSettings,
 } from "../shared/types";
 import { getSession, updateSession, deleteSession } from "../storage/sessions";
+import { readLicenceState } from "../storage/licence-store";
+import { mayGenerateReport, describeLicenceStatus } from "../shared/licence";
 import { readEventsForSession } from "../storage/events";
 import {
   readDomSnapshots,
@@ -785,6 +787,20 @@ async function runReportGeneration(allowVideoUpload: boolean): Promise<void> {
   reportActions.hidden = true;
 
   try {
+    // THE LICENCE GATE. Deliberately here and nowhere else: recording, the
+    // video and the generated Playwright script keep working after the trial
+    // ends. Only the AI report is gated. A tester whose trial expires mid
+    // session keeps everything they already recorded.
+    const licence = await readLicenceState();
+    if (!mayGenerateReport(licence)) {
+      reportStatusText.textContent = describeLicenceStatus(licence);
+      showPageError(
+        describeLicenceStatus(licence)
+        + " Your video and your Playwright script are on this page and are "
+        + "unaffected. Open Settings to enter a licence key.");
+      return;
+    }
+
     const currentSettings: ExtensionSettings = await readSettings();
     settings = currentSettings;
 

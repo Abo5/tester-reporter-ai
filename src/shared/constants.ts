@@ -126,8 +126,27 @@ export const PREFERRED_RECORDING_MIME_TYPES: readonly string[] = [
 /** Above this we never send video; key frames only. */
 export const VIDEO_HARD_SIZE_CEILING_BYTES: number = 200 * 1024 * 1024;
 
-/** Above this duration, likewise. VERIFY the model's real duration limit. */
+/**
+ * Above this duration we send key frames instead of the video.
+ *
+ * CONFIRMED against the official video-understanding documentation: a model
+ * with a 1M-token context window accepts video up to ONE HOUR at default media
+ * resolution. This ceiling is deliberately far below that, and the reason is
+ * cost rather than capability: an hour of video is roughly 1,080,000 input
+ * tokens at 300 tokens/second, which would not fit the context alongside the
+ * page code and would cost more than the whole session is worth. Ten minutes is
+ * about 180,000 tokens, which is a defensible bill for one bug report.
+ *
+ * Raise it if you are analysing long journeys and have read the cost estimate
+ * in the review page first.
+ */
 export const VIDEO_HARD_DURATION_CEILING_MS: number = 10 * 60 * 1000;
+
+/**
+ * The model's OWN limit, for the record. We never approach it.
+ * Source: the video-understanding documentation, default media resolution.
+ */
+export const MODEL_VIDEO_DURATION_LIMIT_MS: number = 60 * 60 * 1000;
 
 /** Below this, inlining base64 beats an upload round trip. */
 export const VIDEO_INLINE_THRESHOLD_BYTES: number = 2 * 1024 * 1024;
@@ -137,21 +156,37 @@ export const KEY_FRAME_JPEG_QUALITY: number = 0.7;
 export const KEY_FRAME_MAX_WIDTH: number = 1280;
 
 /**
- * MIME types we believe the model accepts.
+ * MIME types the model accepts.
  * PARTIALLY CONFIRMED: video/mp4 is accepted - a real recording was sent inline
  * and via the Files API, and analysed. The other three entries are still
  * assumptions; in particular video/webm has never been tested, because
  * Chromium 149 always chose MP4 for recording.
  *
- * If an entry here is wrong, that session silently takes the key-frame path -
- * which works, but you would want to know.
+ * CONFIRMED against the official video-understanding documentation. video/mp4
+ * is additionally confirmed by running it: a real recording was sent inline and
+ * via the Files API and analysed. The rest come from that list.
+ *
+ * If an entry here were wrong, that session would silently take the key-frame
+ * path - which works, but you would want to know.
  */
-export const ASSUMED_SUPPORTED_VIDEO_MIME_TYPES: readonly string[] = [
+export const SUPPORTED_VIDEO_MIME_TYPES: readonly string[] = [
   "video/mp4",
-  "video/webm",
-  "video/mov",
   "video/mpeg",
+  "video/mov",
+  "video/avi",
+  "video/x-flv",
+  "video/mpg",
+  "video/webm",
+  "video/wmv",
+  "video/3gpp",
 ];
+
+/**
+ * Kept as the old name so nothing that imports it breaks.
+ * @deprecated Use SUPPORTED_VIDEO_MIME_TYPES; these are no longer assumptions.
+ */
+export const ASSUMED_SUPPORTED_VIDEO_MIME_TYPES: readonly string[] =
+  SUPPORTED_VIDEO_MIME_TYPES;
 
 // -----------------------------------------------------------------------------
 // Network and console capture
@@ -190,11 +225,45 @@ export const ESTIMATED_CHARACTERS_PER_TOKEN: number = 4;
  */
 export const CONFIRM_ABOVE_ESTIMATED_TOKENS: number = 50000;
 
-/** VERIFY: the per-second video token rate for your model. Placeholder. */
+/**
+ * Input tokens per second of video.
+ *
+ * CONFIRMED: "approximately 300 tokens per second of video at default media
+ * resolution, or 100 tokens per second at low media resolution" - the official
+ * video-understanding documentation. The placeholder that sat here was already
+ * 300, which was luck rather than knowledge; it is now sourced.
+ */
 export const ESTIMATED_VIDEO_TOKENS_PER_SECOND: number = 300;
 
-/** VERIFY: the per-image token cost. Placeholder. */
-export const ESTIMATED_TOKENS_PER_KEY_FRAME: number = 300;
+/**
+ * Input tokens per key frame.
+ *
+ * CONFIRMED: an image costs 258 tokens when both dimensions are 384px or under,
+ * and larger images are tiled at 258 tokens per 768x768 tile - the official
+ * image-understanding documentation.
+ *
+ * Key frames are capped at KEY_FRAME_MAX_WIDTH (1280) and are therefore tiled,
+ * not flat-rate. A 1280x720 frame has a crop unit of floor(720 / 1.5) = 480, so
+ * ceil(1280/480) x ceil(720/480) = 3 x 2 = 6 tiles, which is 1,548 tokens. The
+ * old placeholder of 300 understated a key-frame session FIVEFOLD - and the
+ * key-frame path is the fallback for exactly the long recordings where cost
+ * matters most.
+ */
+export const ESTIMATED_TOKENS_PER_KEY_FRAME: number = 1548;
+
+/**
+ * Price per million INPUT tokens, in US dollars, for the default model.
+ *
+ * CONFIRMED for gemini-3.5-flash on the official pricing page: $1.50 per 1M
+ * input tokens, $9.00 per 1M output. Only the input figure is used here,
+ * because a bug report's output is a few hundred tokens against tens of
+ * thousands of evidence.
+ *
+ * A PRICE IN A CONSTANT GOES STALE. It is shown as "about", next to the token
+ * count, which is the figure that does not change. If the estimate ever looks
+ * wrong, the token count is the one to trust and this is the number to check.
+ */
+export const INPUT_PRICE_PER_MILLION_TOKENS_USD: number = 1.50;
 
 /**
  * How long the generated script waits between steps, in milliseconds.
@@ -295,3 +364,41 @@ export const NOT_DETERMINABLE_SENTENCE: string =
 
 /** Namespace for the MAIN-world <-> ISOLATED-world postMessage bridge. */
 export const BRIDGE_CHANNEL: string = "TESTER_REPORTER_AI_BRIDGE";
+
+// -----------------------------------------------------------------------------
+// Trial and licensing
+//
+// See src/shared/licence.ts for what this layer does and does not achieve, and
+// PLAN.md section 24 for the server contract that makes it real.
+// -----------------------------------------------------------------------------
+
+/** Length of the free trial, in days. */
+export const TRIAL_DAYS: number = 14;
+
+/**
+ * Where a licence key is verified.
+ *
+ * EMPTY BY DEFAULT, and that is the honest state: with no endpoint the check is
+ * local, which means a determined customer can bypass it. Set this to your own
+ * server and the enforcement becomes real without another line changing here.
+ *
+ * The host must also be added to host_permissions in the manifest, or the
+ * service worker cannot fetch it.
+ *
+ * ⚠️ VERIFY: the contract in PLAN.md section 24 is a DESIGN, not a description
+ * of something that exists. Nothing has been built or tested against it.
+ */
+export const LICENCE_VERIFY_ENDPOINT: string = "";
+
+/**
+ * Where the customer is sent to pay.
+ *
+ * ⚠️ VERIFY: this must be replaced with the real PayPal link before shipping.
+ * It is deliberately left empty rather than filled with a guess - a wrong
+ * payment link sends money to the wrong place, or nowhere, and neither failure
+ * announces itself. See PLAN.md section 24 for how to create the link.
+ */
+export const PAYPAL_CHECKOUT_URL: string = "";
+
+/** Shown next to the payment button so the customer knows what they are buying. */
+export const LICENCE_PRICE_DISPLAY: string = "";
