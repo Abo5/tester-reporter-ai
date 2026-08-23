@@ -707,3 +707,89 @@ test("the gate threshold is low enough that any video crosses it", () => {
   assert.ok(oneSecondOfVideo * 200 > 50000,
     "a short video must still cross the confirmation threshold");
 });
+
+// -----------------------------------------------------------------------------
+// Rows written by an older version
+//
+// "TypeError: Cannot read properties of undefined (reading 'indexOf')" - hit by
+// a tester on a session they had already recorded, the moment a new field was
+// added. `undefined` is not `""`, so a guard written as `if (x !== "")` PASSES
+// on the old row and hands undefined to code expecting a string.
+//
+// readSettings() has merged against defaults since the beginning for exactly
+// this reason. Sessions and events never did.
+// -----------------------------------------------------------------------------
+
+/** A session as it was stored before any of the recent fields existed. */
+function sessionFromAnOlderVersion() {
+  return {
+    id: "old-1",
+    name: "OrangeHRM",
+    status: "complete",
+    startedAtMs: 1000,
+    stoppedAtMs: 200000,
+    wallClockDurationMs: 199000,
+    recordedDurationMs: 199000,
+    originTabId: 1,
+    originUrl: "https://opensource-demo.orangehrmlive.com/",
+    originTitle: "OrangeHRM",
+    eventCount: 20,
+    domSnapshotCount: 3,
+    networkEntryCount: 0,
+    networkFailureCount: 0,
+    consoleErrorCount: 0,
+    media: null,
+    bugReport: null,
+    reportLanguage: "en",
+    videoUploadConsentGiven: false,
+    lastVideoDeliveryMode: "omitted",
+    // finalScreenshotDataUrl, interactionCaptureDegradedReason,
+    // videoDowngradeReason, visitedUrls, redactionSummary: all absent.
+  };
+}
+
+test("a session from an older version comes back with every field", () => {
+  const session = api.normaliseSession(sessionFromAnOlderVersion());
+
+  assert.equal(session.finalScreenshotDataUrl, "",
+    "the missing field must read as empty, not undefined");
+  assert.equal(session.interactionCaptureDegradedReason, "");
+  assert.equal(session.videoDowngradeReason, "");
+  assert.deepEqual(session.visitedUrls, []);
+  assert.deepEqual(session.redactionSummary, {});
+
+  // And the fields it DID have survive untouched.
+  assert.equal(session.name, "OrangeHRM");
+  assert.equal(session.eventCount, 20);
+});
+
+test("the exact crash: extractBase64Payload on a missing field", () => {
+  const old = sessionFromAnOlderVersion();
+
+  // Before the fix this threw. The guard `!== ""` passes on undefined.
+  assert.equal(api.extractBase64Payload(old.finalScreenshotDataUrl), null,
+    "an absent data URL must read as no payload, not throw");
+  assert.equal(api.extractBase64Payload(""), null);
+  assert.equal(api.extractBase64Payload("data:image/png;base64,AAAB"), "AAAB");
+});
+
+test("an event from an older version has a keystrokes array", () => {
+  const event = api.normaliseEvent({
+    index: 0, sessionId: "old-1", type: "input", wallClockMs: 1000,
+    videoOffsetMs: 0, pageUrl: "https://x.test/", pageTitle: "x",
+    tabId: 1, frameId: 0, locator: null, value: "Admin",
+    valueWasRedacted: false, clientX: -1, clientY: -1,
+    domSnapshotId: "", elementContextId: "",
+    // keystrokes and dropTargetLocator absent.
+  });
+
+  assert.deepEqual(event.keystrokes, []);
+  assert.equal(event.dropTargetLocator, null);
+  assert.equal(event.value, "Admin");
+});
+
+test("codegen survives an event with no keystrokes array", () => {
+  // The path that would have thrown on every pre-existing recording.
+  assert.equal(api.describeKeystrokeCorrections(undefined), "");
+  assert.equal(api.describeKeystrokeCorrections(null), "");
+});

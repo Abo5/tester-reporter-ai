@@ -8019,6 +8019,48 @@ that question.
 
 ---
 
+### 19.t The field that broke every session already recorded
+
+```
+TypeError: Cannot read properties of undefined (reading 'indexOf')
+```
+
+Reported by the tester, on sessions they had already recorded. Adding
+`finalScreenshotDataUrl` to `RecordingSession` did it: a row written before the
+field existed comes back from IndexedDB without it, and **`undefined` is not
+`""`**. The guard was written as
+
+```ts
+if (session.finalScreenshotDataUrl !== "") { ... }
+```
+
+which PASSES on the old row and hands `undefined` to `extractBase64Payload`.
+Every session they cared about stopped generating a report. Confirmed against
+their real profile — all four stored rows had `finalScreenshotDataUrl:
+undefined`.
+
+**`readSettings()` has merged against defaults since the first week** for
+exactly this reason, with a comment saying so: *"after an update, a stored
+object from the old version is missing new keys, and reading `undefined` into a
+boolean check is exactly the kind of bug that only shows up for existing
+users."* That lesson was written down, applied to one store, and not to the
+other two. Sessions and events never had it, so every field added from here
+would have repeated the same break.
+
+`normaliseSession()` and `normaliseEvent()` now fill in missing fields on the
+way OUT of storage. On read rather than as a migration, deliberately: there is
+no migration to get wrong, no version number to keep in step, and a row written
+by a newer version and read by an older one still behaves.
+
+`extractBase64Payload` also type-checks its argument now. That is a seatbelt,
+not the fix — it sits on the path to the API, and a caller handing it undefined
+should get "no payload" rather than stopping a report being generated at all.
+
+Verified the way it was reported: the review page for the session that crashed
+now loads with zero page errors and its 3,927-character script intact.
+
+---
+
 ## 20. Browser verification — what running it actually proved
 
 Section 19.2 said the media path and the Chrome APIs were "still theory". They are not

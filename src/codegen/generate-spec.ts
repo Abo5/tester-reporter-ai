@@ -299,7 +299,7 @@ function buildHeaderLines(
  * pressSequentially line above is a simplification of what happened.
  */
 export function describeKeystrokeCorrections(keystrokes: string[]): string {
-  if (keystrokes.length === 0) {
+  if (!Array.isArray(keystrokes) || keystrokes.length === 0) {
     return "";
   }
 

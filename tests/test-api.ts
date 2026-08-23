@@ -79,3 +79,6 @@ export {
 export { createId } from "../src/shared/ids";
 export { NOT_DETERMINABLE_SENTENCE, SUPPORTED_MODELS, MAX_SNAPSHOT_CHARACTERS }
   from "../src/shared/constants";
+
+export { normaliseSession } from "../src/storage/sessions";
+export { normaliseEvent } from "../src/storage/events";

@@ -91,6 +91,14 @@ export function blobToBase64(blob: Blob): Promise<string> {
  * failed" - and nearly every recording has a multi-codec MIME type.
  */
 export function extractBase64Payload(dataUrl: string): string | null {
+  // Defensive because this sits on the path to the API: a caller handing it
+  // undefined - an older stored row, a field that was never set - should get
+  // "no payload" rather than a TypeError that stops a report being generated at
+  // all. normaliseSession() is the real fix; this is the seatbelt.
+  if (typeof dataUrl !== "string" || dataUrl === "") {
+    return null;
+  }
+
   const marker: string = ";base64,";
   const markerIndex: number = dataUrl.indexOf(marker);
   if (markerIndex !== -1) {

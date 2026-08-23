@@ -549,7 +549,9 @@ export async function buildEvidenceBundle(
   let finalScreenshotBase64: string = "";
   let finalScreenshotMimeType: string = "image/png";
 
-  if (input.allowVideoUpload && input.session.finalScreenshotDataUrl !== "") {
+  if (input.allowVideoUpload
+      && typeof input.session.finalScreenshotDataUrl === "string"
+      && input.session.finalScreenshotDataUrl !== "") {
     finalScreenshotBase64 =
       extractBase64Payload(input.session.finalScreenshotDataUrl) ?? "";
   } else if (input.allowVideoUpload && input.session.media !== null) {
@@ -559,7 +561,8 @@ export async function buildEvidenceBundle(
     finalScreenshotBase64 = await extractFinalFrame(
       input.videoBlob, input.session.media.durationMs);
     finalScreenshotMimeType = "image/jpeg";
-  } else if (input.session.finalScreenshotDataUrl !== "") {
+  } else if (typeof input.session.finalScreenshotDataUrl === "string"
+      && input.session.finalScreenshotDataUrl !== "") {
     truncationNotes.push(
       "A screenshot of the final state was taken but NOT sent, because video "
       + "upload is switched off. An image cannot be redacted the way text can, "

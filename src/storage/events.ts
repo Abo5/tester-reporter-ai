@@ -23,11 +23,42 @@ export async function appendEvent(event: RecordedEvent): Promise<void> {
  * secondary key here is sessionId, which is the same for every row. The
  * resulting order is therefore unspecified, so we sort.
  */
+/**
+ * Fills in fields an event stored by an older version does not have.
+ *
+ * Same reason as normaliseSession: `keystrokes` did not exist until recently,
+ * so every event recorded before it comes back without the array, and
+ * describeKeystrokeCorrections(event.keystrokes) then throws rather than
+ * generating a script - on exactly the sessions a tester already has.
+ */
+export function normaliseEvent(stored: RecordedEvent): RecordedEvent {
+  const event: RecordedEvent = { ...stored };
+
+  if (!Array.isArray(event.keystrokes)) {
+    event.keystrokes = [];
+  }
+  if (event.dropTargetLocator === undefined) {
+    event.dropTargetLocator = null;
+  }
+  if (typeof event.value !== "string") {
+    event.value = "";
+  }
+  if (typeof event.pageUrl !== "string") {
+    event.pageUrl = "";
+  }
+
+  return event;
+}
+
 export async function readEventsForSession(
   sessionId: string,
 ): Promise<RecordedEvent[]> {
-  const events: RecordedEvent[] =
+  const stored: RecordedEvent[] =
     await readAllForSession<RecordedEvent>(STORE_EVENTS, sessionId);
+  const events: RecordedEvent[] = [];
+  for (let index = 0; index < stored.length; index = index + 1) {
+    events.push(normaliseEvent(stored[index]));
+  }
   events.sort(function compareByIndex(
     left: RecordedEvent,
     right: RecordedEvent,
