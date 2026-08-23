@@ -440,3 +440,52 @@ dialog p {
   border-radius: 6px;
   resize: vertical;
 }
+
+/* Failed requests and console errors, in the tester's face rather than three
+   collapsed sections down. */
+.page-behaviour {
+  border: 1px solid var(--border, #d9dce3);
+  border-left: 4px solid var(--danger, #c0332c);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  background: var(--surface, #ffffff);
+}
+
+.page-behaviour h3 {
+  margin: 0 0 8px 0;
+  font-size: 15px;
+}
+
+.behaviour-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.behaviour-list li {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-top: 1px solid var(--border, #d9dce3);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.behaviour-list li:first-child {
+  border-top: none;
+}
+
+.behaviour-list .stamp {
+  flex: 0 0 auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-muted, #5c6270);
+}
+
+.behaviour-list .detail {
+  word-break: break-word;
+}
+
+.behaviour-list .kind-network .detail { color: var(--danger, #c0332c); }
+.behaviour-list .kind-console .detail { color: var(--text, #1a1c20); }

@@ -8177,6 +8177,53 @@ is the thing the rule was written to keep out.
 
 ---
 
+### 19.y Network and console: captured, sent, and never shown
+
+"Network / console were never included in the report and never appeared."
+
+Half of that was a display bug and half was the grant. The stored data said
+both at once: **253 network rows across all sessions, every one from
+webRequest, and ZERO console rows ever.**
+
+**The capture works, on a granted origin.** Measured on the fixture that seeds a
+500 and a console error:
+
+```
+network rows: 2 {"web-request-api":1,"page-world-patch":1}
+console rows: 1   error: Contract lookup failed: Cannot read properties...
+session counters: net=1 fail=1 console=1
+```
+
+Both sources contribute, which matters: `webRequest` sees status codes,
+the page-world patch sees response bodies and the requests an application
+swallows internally. The tester's 253-to-0 split is the signature of sessions
+that ran with no content script at all - `webRequest` runs in the service
+worker and kept working, while the console patch and the fetch patch, which
+live in the page, never existed. That is the ungranted path, now addressed by
+asking for the site at the moment Record is pressed.
+
+**The other half was real, and simpler.** There was no place in the review page
+that showed them. They were captured, redacted, sent to the model, and folded
+into the report's supporting evidence - and a tester looking at the page had no
+way to see that a 500 had been recorded. "They never appeared" was exactly
+right.
+
+`renderPageBehaviour()` now shows them, each with its video timestamp so the
+moment can be found in the recording. When there are none it says so rather than
+showing nothing: a blank space leaves a tester wondering whether it was not
+captured or there was nothing to capture, and those need different responses
+from them.
+
+**And a fourth thing fell out of it.** The hook belonged in the same block as
+three earlier additions - the degradation warning, the tester's Expected
+Behavior, and the final screenshot - and all four sat inside `if
+(session.bugReport !== null)`. They describe the SESSION, not the report, so a
+tester who had not generated a report yet saw none of them. That included the
+warning that their recording was incomplete, which is the one they most needed
+before deciding whether to record the session again.
+
+---
+
 ## 20. Browser verification — what running it actually proved
 
 Section 19.2 said the media path and the Chrome APIs were "still theory". They are not

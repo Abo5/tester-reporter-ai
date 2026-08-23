@@ -494,3 +494,115 @@ test("copying text records what was copied, and a paste is traced to it", async 
 
   await page.close();
 });
+
+test("console errors and MAIN-world network capture both reach storage", async () => {
+  // Reported: "Network / console were never included in the report and never
+  // showed." The stored data said the same thing - 253 network rows across all
+  // sessions, every one of them from webRequest, and ZERO console rows ever.
+  //
+  // Two separate things to prove: the console patch fires, and the MAIN-world
+  // fetch patch contributes entries webRequest cannot (response bodies, and
+  // requests the page swallows internally).
+  const page = await browser.context.newPage();
+  await page.goto(`${server.url}/catalog.html`, { waitUntil: "load" });
+  await page.bringToFront();
+
+  const tabId = await browser.serviceWorker.evaluate(async () =>
+    (await chrome.tabs.query({ active: true, currentWindow: true }))[0]?.id ?? -1);
+
+  await callExtension(extensionPage, {
+    kind: "ui/start-recording", tabId, captureMicrophone: false,
+  });
+  await waitFor("session to reach 'recording'", async () => {
+    const state = await readRecordingState(browser.serviceWorker);
+    return state?.status === "recording";
+  });
+
+  await page.bringToFront();
+  // The seeded defect: this search returns a 500 and logs a console error.
+  await page.click('[data-testid="tab-renewal"]');
+  await page.fill("#tenant", "TN-40192");
+  await page.press("#tenant", "Enter");
+  await page.waitForTimeout(2500);
+
+  await callExtension(extensionPage, { kind: "ui/stop-recording" });
+  const session = await waitFor("session to finish", async () => {
+    const sessions = await readStore(extensionPage, "sessions");
+    const finished = sessions.filter((s) => s.status !== "processing"
+      && s.status !== "recording");
+    if (finished.length === 0) { return null; }
+    finished.sort((a, b) => b.startedAtMs - a.startedAtMs);
+    return finished[0];
+  }, 40000);
+
+  const net = (await readStore(extensionPage, "networkEntries"))
+    .filter((row) => row.sessionId === session.id);
+  const con = (await readStore(extensionPage, "consoleEntries"))
+    .filter((row) => row.sessionId === session.id);
+
+  const bySource = {};
+  for (const row of net) { bySource[row.source] = (bySource[row.source] || 0) + 1; }
+  console.log(`  network rows: ${net.length} ${JSON.stringify(bySource)}`);
+  console.log(`  failures: ${net.filter((r) => r.isFailure).length}`);
+  console.log(`  console rows: ${con.length}`);
+  if (con.length > 0) {
+    console.log(`  first console: ${con[0].level}: ${String(con[0].message).slice(0, 70)}`);
+  }
+  console.log(`  session counters: net=${session.networkEntryCount} `
+    + `fail=${session.networkFailureCount} console=${session.consoleErrorCount}`);
+
+  assert.ok(con.length >= 1,
+    "the console patch captured nothing; the page logged an error");
+  assert.ok(net.some((row) => row.source === "page-world-patch"),
+    `the page-world fetch patch contributed nothing: ${JSON.stringify(bySource)}`);
+  assert.ok(net.some((row) => row.isFailure),
+    "the seeded 500 was not recorded as a failure");
+  assert.ok(session.consoleErrorCount >= 1,
+    "the session counter did not see the console error");
+
+  await page.close();
+});
+
+test("the review page SHOWS the failed request and the console error", async () => {
+  // The other half of the report. They were captured, sent to the model and
+  // folded into the report's supporting evidence - and displayed nowhere, so a
+  // tester looking at the review page had no way to know a 500 had been
+  // recorded at all.
+  const sessions = await readStore(extensionPage, "sessions");
+  const withFailures = sessions.filter((s) => s.networkFailureCount > 0
+    || s.consoleErrorCount > 0);
+  assert.ok(withFailures.length >= 1,
+    "no session in this suite captured a failure to display");
+
+  withFailures.sort((a, b) => b.startedAtMs - a.startedAtMs);
+  const session = withFailures[0];
+
+  const review = await openExtensionPage(browser.context, browser.extensionId,
+    `review/review.html?session=${session.id}`);
+  await review.waitForTimeout(2500);
+
+  const shown = await review.evaluate(() => {
+    const section = document.getElementById("page-behaviour");
+    const rows = Array.from(document.querySelectorAll("#page-behaviour-list li"));
+    return {
+      hidden: section.hidden,
+      title: document.getElementById("page-behaviour-title").textContent,
+      rows: rows.map((row) => row.textContent.trim()),
+    };
+  });
+
+  console.log(`  section hidden: ${shown.hidden}`);
+  console.log(`  title: ${shown.title}`);
+  for (const row of shown.rows) { console.log(`   • ${row.slice(0, 96)}`); }
+
+  assert.equal(shown.hidden, false, "the section did not appear");
+  assert.match(shown.title, /What the page did \(\d+\)/);
+  assert.ok(shown.rows.some((row) => row.includes("500")),
+    "the failed request is not on screen");
+  assert.ok(shown.rows.some((row) => /error:/.test(row)),
+    "the console error is not on screen");
+  assert.ok(shown.rows.every((row) => /^\d\d:\d\d/.test(row)),
+    "every line needs a video timestamp, or the tester cannot find the moment");
+
+  await review.close();
+});

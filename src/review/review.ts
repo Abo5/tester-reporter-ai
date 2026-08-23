@@ -1139,6 +1139,16 @@ async function initialiseReviewPage(): Promise<void> {
   renderStepList(state);
   renderScript(state);
 
+  // These four describe the SESSION, not the report, so they belong here rather
+  // than inside the "a report already exists" branch below - which is where
+  // they were, meaning a tester who had not generated a report yet saw none of
+  // them. That included the warning that their recording was incomplete, which
+  // is the one they most needed before deciding whether to record again.
+  renderDegradationWarning(state.session);
+  renderTesterExpectation(state.session);
+  renderFinalScreenshot(state.session);
+  await renderPageBehaviour(state.session.id);
+
   const currentSettings: ExtensionSettings = await readSettings();
   settings = currentSettings;
 
@@ -1151,9 +1161,6 @@ async function initialiseReviewPage(): Promise<void> {
       false,
     );
     renderRedactionSummary(state.session.redactionSummary);
-    renderDegradationWarning(state.session);
-    renderTesterExpectation(state.session);
-    renderFinalScreenshot(state.session);
     return;
   }
 
@@ -1332,4 +1339,121 @@ async function generateLocalReportForSession(state: LoadedSession): Promise<void
     status: "complete",
     reportFailureReason: "",
   });
+}
+
+// -----------------------------------------------------------------------------
+// What the page did
+//
+// Failed requests and console errors have been captured since the first
+// version, sent to the model, and folded into the report's supporting evidence.
+// They were never SHOWN. A tester looking at the review page had no way to see
+// that a 500 had been recorded, which is why it was reported as "network and
+// console are never included and never appear" - the second half of which was
+// exactly right.
+// -----------------------------------------------------------------------------
+
+/** One line of "what the page did", ready to render. */
+export interface PageBehaviourLine {
+  kind: "network" | "console";
+  stamp: string;
+  detail: string;
+}
+
+/**
+ * Turns the captured failures into lines, newest evidence last.
+ *
+ * WHY only failures and errors rather than every request: a page makes hundreds
+ * of successful requests and none of them is why the tester pressed Record. The
+ * full list is still in the evidence bundle for anyone who wants it.
+ */
+export function buildPageBehaviourLines(
+  networkEntries: NetworkEntry[],
+  consoleEntries: ConsoleEntry[],
+): PageBehaviourLine[] {
+  const lines: PageBehaviourLine[] = [];
+
+  for (let index = 0; index < networkEntries.length; index = index + 1) {
+    const entry: NetworkEntry = networkEntries[index];
+    if (!entry.isFailure) {
+      continue;
+    }
+    lines.push({
+      kind: "network",
+      stamp: formatVideoTimestamp(entry.videoOffsetMs),
+      detail: entry.method + " " + entry.url + " → " + String(entry.statusCode)
+        + (entry.statusText === "" ? "" : " " + entry.statusText),
+    });
+  }
+
+  for (let index = 0; index < consoleEntries.length; index = index + 1) {
+    const entry: ConsoleEntry = consoleEntries[index];
+    lines.push({
+      kind: "console",
+      stamp: formatVideoTimestamp(entry.videoOffsetMs),
+      detail: entry.level + ": " + entry.message,
+    });
+  }
+
+  lines.sort(function byStamp(left: PageBehaviourLine, right: PageBehaviourLine): number {
+    return left.stamp.localeCompare(right.stamp);
+  });
+
+  return lines;
+}
+
+/** Draws the section, or hides it when the page did nothing worth reporting. */
+async function renderPageBehaviour(sessionId: string): Promise<void> {
+  const section = document.getElementById("page-behaviour") as HTMLElement | null;
+  const list = document.getElementById("page-behaviour-list") as HTMLUListElement | null;
+  const title = document.getElementById("page-behaviour-title") as HTMLElement | null;
+  if (section === null || list === null || title === null) {
+    return;
+  }
+
+  const networkEntries: NetworkEntry[] = await readNetworkEntries(sessionId);
+  const consoleEntries: ConsoleEntry[] = await readConsoleEntries(sessionId);
+  const lines: PageBehaviourLine[] =
+    buildPageBehaviourLines(networkEntries, consoleEntries);
+
+  list.textContent = "";
+
+  if (lines.length === 0) {
+    // Saying "nothing" is worth a line of its own: a blank space leaves the
+    // tester wondering whether it was not captured or there was nothing to
+    // capture, and those need different responses from them.
+    section.hidden = false;
+    title.textContent = "What the page did";
+    const empty = document.createElement("li");
+    empty.className = "kind-console";
+    empty.innerHTML = "";
+    const detail = document.createElement("span");
+    detail.className = "detail";
+    detail.textContent =
+      "No failed requests and no console errors were captured during this "
+      + "session.";
+    empty.appendChild(detail);
+    list.appendChild(empty);
+    return;
+  }
+
+  section.hidden = false;
+  title.textContent = "What the page did (" + String(lines.length) + ")";
+
+  for (let index = 0; index < lines.length; index = index + 1) {
+    const line: PageBehaviourLine = lines[index];
+    const row = document.createElement("li");
+    row.className = "kind-" + line.kind;
+
+    const stamp = document.createElement("span");
+    stamp.className = "stamp";
+    stamp.textContent = line.stamp;
+
+    const detail = document.createElement("span");
+    detail.className = "detail";
+    detail.textContent = line.detail;
+
+    row.appendChild(stamp);
+    row.appendChild(detail);
+    list.appendChild(row);
+  }
 }

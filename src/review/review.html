@@ -100,6 +100,17 @@
             <div id="evidence-badges" class="badge-row"></div>
 
             <!--
+              What the page itself did. Captured since the first version, sent
+              to the model, folded into the report - and never shown to the
+              tester anywhere, which is how it came to be reported as "network
+              and console never appeared".
+            -->
+            <section id="page-behaviour" class="page-behaviour" hidden>
+              <h3 id="page-behaviour-title">What the page did</h3>
+              <ul id="page-behaviour-list" class="behaviour-list"></ul>
+            </section>
+
+            <!--
               Expected Behavior is the one field a recording cannot supply. The
               model is required to write "not determinable" rather than invent
               it, which is right and also the least useful line in the report.
