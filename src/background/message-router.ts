@@ -14,6 +14,7 @@ import type {
   StatusUpdateMessage,
   FinalSnapshotReply,
 } from "../shared/messages";
+import { FINAL_SCREENSHOT_TIMEOUT_MS } from "../shared/constants";
 import { asExtensionMessage, sendMessageIgnoringNoReceiver } from "../shared/messages";
 import type {
   RecordedEvent,
@@ -605,6 +606,38 @@ async function captureFinalSnapshot(state: ActiveRecordingState): Promise<void> 
 
 
 /**
+ * Rejects if a promise has not settled in time.
+ *
+ * WHY it exists here rather than being assumed unnecessary: a Chrome API that
+ * neither resolves nor rejects is indistinguishable from a slow one, and
+ * awaiting it on a critical path stalls everything behind it forever. Anything
+ * optional that sits in front of something essential gets one of these.
+ */
+async function withTimeout<T>(
+  work: Promise<T>,
+  timeoutMs: number,
+  description: string,
+): Promise<T> {
+  let timerId: number = 0;
+
+  const timeout: Promise<never> = new Promise(function reject(
+    _resolve: (value: never) => void,
+    rejectPromise: (reason: Error) => void,
+  ): void {
+    timerId = setTimeout(function onTimeout(): void {
+      rejectPromise(new Error(description + " within "
+        + String(timeoutMs) + "ms."));
+    }, timeoutMs) as unknown as number;
+  });
+
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    clearTimeout(timerId);
+  }
+}
+
+/**
  * Takes a PNG of the tab as it looks right now and stores it on the session.
  *
  * WHY here and not at report time: by the time anyone opens the review page the
@@ -624,9 +657,21 @@ async function captureFinalScreenshot(state: ActiveRecordingState): Promise<void
       return;
     }
 
-    const dataUrl: string = await chrome.tabs.captureVisibleTab(tab.windowId, {
-      format: "png",
-    });
+    // BOUNDED. This runs on the path to stopping the recorder, and a still
+    // image is a convenience while the video is the artifact.
+    //
+    // captureVisibleTab does not always reject when it cannot deliver - on a
+    // window that is not visible it can simply never settle. Awaiting it
+    // without a bound means the stop message never reaches the offscreen
+    // document, which then never reports back, and fifteen seconds later the
+    // session is finished with "The recorder did not report back, so no video
+    // was stored". A missing screenshot became a missing VIDEO. Never let the
+    // optional thing block the essential one.
+    const dataUrl: string = await withTimeout(
+      chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" }),
+      FINAL_SCREENSHOT_TIMEOUT_MS,
+      "captureVisibleTab did not answer",
+    );
 
     if (typeof dataUrl !== "string" || dataUrl === "") {
       return;

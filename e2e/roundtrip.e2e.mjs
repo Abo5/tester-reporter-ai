@@ -97,6 +97,10 @@ async function runGeneratedSpec(specSource, name) {
 import { defineConfig } from '@playwright/test';
 export default defineConfig({
   testDir: '.',
+  // The generated spec raises its own timeout with test.setTimeout(), because
+  // it waits on purpose. This config value is only the floor; leaving it at the
+  // default was what made the paced script die mid-replay with "Target page,
+  // context or browser has been closed".
   timeout: 30000,
   retries: 0,
   reporter: 'list',

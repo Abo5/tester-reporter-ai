@@ -99,6 +99,26 @@
 
             <div id="evidence-badges" class="badge-row"></div>
 
+            <!--
+              Expected Behavior is the one field a recording cannot supply. The
+              model is required to write "not determinable" rather than invent
+              it, which is right and also the least useful line in the report.
+              The tester knows. This is where they say so.
+            -->
+            <section class="expected-card">
+              <div class="expected-head">
+                <label for="expected-input">
+                  <strong>Expected Behavior</strong> — what <em>should</em> have happened?
+                </label>
+                <button type="button" id="expected-apply-button" class="primary">
+                  Put it in the report
+                </button>
+              </div>
+              <textarea id="expected-input" rows="3" spellcheck="true"
+                placeholder="e.g. the tenant filter should keep the selected row highlighted after the page reloads"></textarea>
+              <p id="expected-status" class="status-line"></p>
+            </section>
+
             <textarea id="report-text" rows="22" spellcheck="true"
               placeholder="The generated report will appear here, and you can edit it before sharing."></textarea>
 

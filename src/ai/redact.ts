@@ -446,6 +446,13 @@ function assertBundleShape(bundle: AIEvidenceBundle): void {
   // An image is pixels: the gate cannot inspect it, and the ONLY thing it can
   // guarantee is that the field is what it claims to be. Whether it is sent at
   // all is decided by the video consent, in buildEvidenceBundle.
+  if (typeof bundle.testerExpectedResult !== "string") {
+    throw new Error(
+      "The evidence bundle field 'testerExpectedResult' is not a string, so it "
+      + "could not be inspected for sensitive data.",
+    );
+  }
+
   if (typeof bundle.finalScreenshotBase64 !== "string") {
     throw new Error(
       "The evidence bundle field 'finalScreenshotBase64' is not a string, so "
@@ -606,6 +613,8 @@ export function redactSensitiveData(
 
     return {
       ...bundle,
+      testerExpectedResult: redactValuePatterns(
+        bundle.testerExpectedResult, counter, extraPatterns),
       actionTrace: redactedTrace,
       playwrightScript: redactedScript,
       domSnapshots: redactedSnapshots,

@@ -415,3 +415,82 @@ test("the step counter never lags behind the last action", async () => {
   await panel.close();
   await page.close();
 });
+
+test("copying text records what was copied, and a paste is traced to it", async () => {
+  // The reported gap: "I right-clicked and copied text on the login page twice
+  // and it is not in the script or the report."
+  //
+  // It was recorded, but empty. On a COPY the event fires BEFORE the clipboard
+  // is written - that is the point of the event - so clipboardData.getData()
+  // returns "" every time. What the tester copied is the SELECTION. Reading the
+  // wrong one produced "the tester copied" with nothing after it, which is the
+  // shape of a bug that looks like a missing feature.
+  const page = await browser.context.newPage();
+  await page.goto(`${server.url}/interactions.html`, { waitUntil: "load" });
+  await page.bringToFront();
+
+  const tabId = await browser.serviceWorker.evaluate(async () =>
+    (await chrome.tabs.query({ active: true, currentWindow: true }))[0]?.id ?? -1);
+
+  await callExtension(extensionPage, {
+    kind: "ui/start-recording", tabId, captureMicrophone: false,
+  });
+  await waitFor("session to reach 'recording'", async () => {
+    const state = await readRecordingState(browser.serviceWorker);
+    return state?.status === "recording";
+  });
+  await page.bringToFront();
+
+  // Select the row text and copy it, the way a tester does.
+  await page.evaluate(() => {
+    const node = document.getElementById("right-me");
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  });
+  await page.keyboard.press("ControlOrMeta+c");
+  await page.waitForTimeout(800);
+
+  // Then paste it somewhere, so the link between them can be tested.
+  await page.click("#target");
+  await page.keyboard.press("ControlOrMeta+v");
+  await page.waitForTimeout(1000);
+
+  await callExtension(extensionPage, { kind: "ui/stop-recording" });
+  const session = await waitFor("session to finish", async () => {
+    const sessions = await readStore(extensionPage, "sessions");
+    const finished = sessions.filter((s) => s.status !== "processing"
+      && s.status !== "recording");
+    if (finished.length === 0) { return null; }
+    finished.sort((a, b) => b.startedAtMs - a.startedAtMs);
+    return finished[0];
+  }, 40000);
+
+  const events = (await readStore(extensionPage, "events"))
+    .filter((event) => event.sessionId === session.id);
+  const copies = events.filter((event) => event.type === "copy");
+  const pastes = events.filter((event) => event.type === "paste");
+
+  console.log(`  copies: ${JSON.stringify(copies.map((e) => e.value))}`);
+  console.log(`  pastes: ${JSON.stringify(pastes.map((e) => e.value))}`);
+
+  assert.ok(copies.length >= 1, "the copy was not recorded at all");
+  assert.notEqual(copies[0].value, "",
+    "the copy was recorded with no text - clipboardData is empty on a copy "
+    + "event; the selection is what was copied");
+  assert.match(copies[0].value, /Right-click this row/);
+
+  const script = session.playwrightScript;
+  assert.ok(script.includes("navigator.clipboard.writeText"),
+    `the copied text never reached the script:\n${script}`);
+
+  if (pastes.length >= 1) {
+    console.log(`  paste value: ${pastes[0].value}`);
+    assert.ok(script.includes("PASTED this rather than typing it"),
+      "the paste is not in the script");
+  }
+
+  await page.close();
+});

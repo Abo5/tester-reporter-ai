@@ -197,6 +197,7 @@ function buildBundle() {
     redactionSummary: {},
     truncationNotes: [],
     finalScreenshotBase64: "",
+    testerExpectedResult: "",
     finalScreenshotMimeType: "image/png",
     estimatedInputTokens: 0,
   };

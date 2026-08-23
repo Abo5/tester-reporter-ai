@@ -93,6 +93,9 @@ const unverifiedList = requireElement<HTMLElement>("unverified-list");
 const evidenceBadges = requireElement<HTMLElement>("evidence-badges");
 const reportText = requireElement<HTMLTextAreaElement>("report-text");
 const copyReportButton = requireElement<HTMLButtonElement>("copy-report-button");
+const expectedInput = requireElement<HTMLTextAreaElement>("expected-input");
+const expectedApplyButton = requireElement<HTMLButtonElement>("expected-apply-button");
+const expectedStatus = requireElement<HTMLParagraphElement>("expected-status");
 const copyReportFullButton =
   requireElement<HTMLButtonElement>("copy-report-full-button");
 const regenerateButton = requireElement<HTMLButtonElement>("regenerate-button");
@@ -1081,6 +1084,7 @@ function installHandlers(): void {
  */
 async function initialiseReviewPage(): Promise<void> {
   installHandlers();
+  installExpectedResultHandler();
 
   const sessionId: string = readSessionIdFromUrl();
   if (sessionId === "") {
@@ -1117,6 +1121,7 @@ async function initialiseReviewPage(): Promise<void> {
     );
     renderRedactionSummary(state.session.redactionSummary);
     renderDegradationWarning(state.session);
+    renderTesterExpectation(state.session);
     renderFinalScreenshot(state.session);
     return;
   }
@@ -1146,3 +1151,110 @@ initialiseReviewPage().catch(function onInitError(initError: unknown): void {
   logWarning("review", "The review page failed to start.", initError);
   showPageError("The review page failed to start: " + String(initError));
 });
+
+// -----------------------------------------------------------------------------
+// The tester's own Expected Behavior
+//
+// Expected Behavior is the one field a recording cannot supply. A video shows
+// what the application did; it does not show what the specification said it
+// should do, so the model is required to write the "not determinable" sentence
+// rather than invent one. That is correct, and it is also the least useful line
+// in the report - because the tester knows the answer and had nowhere to put it.
+// -----------------------------------------------------------------------------
+
+/** Loads whatever the tester wrote last time, so it is not lost on reload. */
+function renderTesterExpectation(session: RecordingSession): void {
+  expectedInput.value = session.testerExpectedResult;
+
+  if (session.testerExpectedResult.trim() !== "") {
+    expectedStatus.textContent =
+      "In the report, marked as stated by you rather than derived from the "
+      + "recording.";
+  } else {
+    expectedStatus.textContent = "";
+  }
+}
+
+/**
+ * Writes the tester's sentence into the report text and stores it.
+ *
+ * WHY it edits the report text rather than only storing the field: the textarea
+ * is what the tester copies out and pastes into a ticket. A value that lives
+ * only in storage is a value that never reaches anybody.
+ *
+ * The attribution is not optional. The model is REQUIRED to say "not
+ * determinable from the recording" when the evidence cannot establish what
+ * should have happened, and that honesty is the point of the pipeline.
+ * Overwriting it silently would erase the difference between what was observed
+ * and what someone believes.
+ */
+function installExpectedResultHandler(): void {
+  expectedApplyButton.addEventListener("click", function onApply(): void {
+    if (loaded === null) {
+      return;
+    }
+
+    const written: string = expectedInput.value.trim();
+    if (written === "") {
+      expectedStatus.textContent =
+        "Write what should have happened first, then press this.";
+      return;
+    }
+
+    const sessionId: string = loaded.session.id;
+    loaded.session.testerExpectedResult = written;
+
+    const currentText: string = reportText.value;
+    if (currentText.trim() === "") {
+      expectedStatus.textContent =
+        "Saved. It will go into the report as soon as one is generated.";
+      void updateSession(sessionId, { testerExpectedResult: written });
+      return;
+    }
+
+    reportText.value = replaceExpectedBehaviourLine(currentText, written);
+
+    void updateSession(sessionId, {
+      testerExpectedResult: written,
+      editedReportText: reportText.value,
+    });
+
+    expectedStatus.textContent =
+      "In the report, marked as stated by you rather than derived from the "
+      + "recording.";
+  });
+}
+
+/**
+ * Swaps the Expected Behavior line of a rendered report for the tester's.
+ *
+ * WHY it works on the rendered text and not the structured report: by this
+ * point the tester may have edited the text by hand, and regenerating it from
+ * the structure would throw those edits away. Matching the line keeps them.
+ *
+ * The label is fixed by the template, so matching its prefix is safe; when the
+ * line is somehow absent the sentence is appended rather than dropped, because
+ * losing what a person wrote is the one outcome worth avoiding.
+ */
+export function replaceExpectedBehaviourLine(
+  reportBody: string,
+  testerExpectation: string,
+): string {
+  const lines: string[] = reportBody.split("\n");
+  let replaced: boolean = false;
+
+  for (let index = 0; index < lines.length; index = index + 1) {
+    if (lines[index].startsWith("Expected Behavior:")) {
+      lines[index] =
+        "Expected Behavior: " + testerExpectation + " (stated by the tester)";
+      replaced = true;
+    }
+  }
+
+  if (!replaced) {
+    lines.push(
+      "Expected Behavior: " + testerExpectation + " (stated by the tester)");
+  }
+
+  return lines.join("\n");
+}

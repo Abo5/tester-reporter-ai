@@ -419,3 +419,67 @@ test("the final frame of the recording is usable as the report's screenshot", as
     `the frame looks blank (${frame.chars} chars); seeking probably landed past `
     + "the last decodable frame");
 });
+
+test("a screenshot API that never answers does not cost the video", async () => {
+  // THE REGRESSION. captureVisibleTab was awaited on the path to stopping the
+  // recorder. It does not always reject when it cannot deliver - on a window
+  // that is not visible it can simply never settle - so the stop message never
+  // reached the offscreen document, which never reported back, and fifteen
+  // seconds later the session was finished with "The recorder did not report
+  // back, so no video was stored for this session".
+  //
+  // A missing screenshot became a missing VIDEO. This pins the bound.
+  const wedged = await browser.serviceWorker.evaluate(async () => {
+    const original = chrome.tabs.captureVisibleTab;
+    // A promise that never settles, which is exactly what was observed.
+    chrome.tabs.captureVisibleTab = () => new Promise(() => {});
+    globalThis.__restoreCapture = () => { chrome.tabs.captureVisibleTab = original; };
+    return true;
+  });
+  assert.ok(wedged, "could not wedge captureVisibleTab");
+
+  try {
+    const page = await browser.context.newPage();
+    await page.goto(`${server.url}/catalog.html`, { waitUntil: "load" });
+    await page.bringToFront();
+
+    const delivered = await sendBrowserShortcut("ctrl+shift+e");
+    assert.ok(delivered, "could not deliver the shortcut");
+    await waitFor("session to reach 'recording'", async () => {
+      const state = await readRecordingState(browser.serviceWorker);
+      return state?.status === "recording";
+    });
+
+    await page.bringToFront();
+    await page.click('[data-testid="tab-renewal"]').catch(() => {});
+    await page.waitForTimeout(2500);
+
+    const startedAt = Date.now();
+    await sendBrowserShortcut("ctrl+shift+e");
+
+    const session = await waitFor("session to finish", async () => {
+      const sessions = await readStore(extensionPage, "sessions");
+      const finished = sessions.filter((s) => s.status !== "processing"
+        && s.status !== "recording");
+      if (finished.length === 0) { return null; }
+      finished.sort((a, b) => b.startedAtMs - a.startedAtMs);
+      return finished[0];
+    }, 40000);
+
+    const tookMs = Date.now() - startedAt;
+    console.log(`  finished in ${tookMs}ms, media=${session.media.state}, `
+      + `${session.media.sizeBytes} bytes`);
+    console.log(`  failureReason: ${session.media.failureReason || "(none)"}`);
+
+    assert.equal(session.media.state, "stopped",
+      `the video was lost to a hung screenshot: ${session.media.failureReason}`);
+    assert.ok(session.media.sizeBytes > 1000, "the recording is empty");
+    assert.ok(tookMs < 14000,
+      `stopping took ${tookMs}ms; it waited on the screenshot instead of `
+      + "giving up on it");
+
+    await page.close();
+  } finally {
+    await browser.serviceWorker.evaluate(() => globalThis.__restoreCapture());
+  }
+});

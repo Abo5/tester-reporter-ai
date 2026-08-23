@@ -48,6 +48,7 @@ function makeBundle(overrides = {}) {
     redactionSummary: {},
     truncationNotes: [],
     finalScreenshotBase64: "",
+    testerExpectedResult: "",
     finalScreenshotMimeType: "image/png",
     estimatedInputTokens: 0,
     ...overrides,
@@ -384,6 +385,7 @@ test("NO string field anywhere in the bundle escapes the gate", () => {
     redactionSummary: {},
     truncationNotes: [],
     finalScreenshotBase64: "",
+    testerExpectedResult: "",
     finalScreenshotMimeType: "image/png",
     estimatedInputTokens: 0,
   };

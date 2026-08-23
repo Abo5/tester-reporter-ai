@@ -35,7 +35,11 @@ export {
 } from "../src/ai/validate";
 export { generateBugReport, resolveModelId, uploadVideoToFilesApi, deleteUploadedFile }
   from "../src/ai/gemini";
-export { formatReportAsPlainText, formatReportWithMetadata } from "../src/ai/format";
+export {
+  formatReportAsPlainText,
+  formatReportWithMetadata,
+  formatReportWithTesterExpectation,
+} from "../src/ai/format";
 export { BUG_REPORT_RESPONSE_SCHEMA, schemaPropertyNames } from "../src/ai/schema";
 export {
   selectSnapshotsForBundle,
@@ -55,7 +59,8 @@ export { SYSTEM_INSTRUCTION, buildEvidenceText, buildLanguageInstruction }
   from "../src/ai/prompt";
 
 export { generatePlaywrightSpec, buildSpecFileName, describeBrowserLevelShortcut,
-  describeKeystrokeCorrections, describeMousePath }
+  describeKeystrokeCorrections, describeMousePath, describePasteSource,
+  totalRecordedGapMs }
   from "../src/codegen/generate-spec";
 export { coalesceEventsForCodegen, nextEventAfter }
   from "../src/codegen/coalesce-events";

@@ -410,3 +410,33 @@ dialog p {
   font-size: 13px;
   color: var(--text-muted, #5c6270);
 }
+
+/* The tester's own Expected Behavior. Set apart, because it is the one line in
+   the report that comes from a person rather than from the evidence. */
+.expected-card {
+  border: 1px solid var(--border, #d9dce3);
+  border-left: 4px solid var(--primary, #1f5fd0);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  background: var(--surface, #ffffff);
+}
+
+.expected-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.expected-card textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #d9dce3);
+  border-radius: 6px;
+  resize: vertical;
+}

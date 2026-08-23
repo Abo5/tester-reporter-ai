@@ -1075,6 +1075,50 @@ export function handleAuxClick(nativeEvent: MouseEvent): void {
 }
 
 /**
+ * The text a clipboard event is actually about.
+ *
+ * WHY copy and paste are read from different places, which cost a session
+ * before it was noticed: on a PASTE the browser has already filled
+ * clipboardData, so getData("text") is the pasted text. On a COPY or a CUT the
+ * event fires BEFORE the clipboard is written - that is the whole point of the
+ * event, it is your chance to change what gets copied - so getData returns an
+ * empty string every time. What the tester copied is the current selection.
+ *
+ * Reading copy through clipboardData recorded "the tester copied" with nothing
+ * after it, which is the shape of a bug that looks like a missing feature.
+ * See https://developer.mozilla.org/docs/Web/API/Window/copy_event
+ */
+export function readClipboardText(
+  nativeEvent: ClipboardEvent,
+  type: RecordedEventType,
+): string {
+  if (type === "paste") {
+    if (nativeEvent.clipboardData === null) {
+      return "";
+    }
+    return nativeEvent.clipboardData.getData("text");
+  }
+
+  const selection: Selection | null = window.getSelection();
+  if (selection !== null && selection.toString() !== "") {
+    return selection.toString();
+  }
+
+  // A cut inside an input does not always show up in the document selection.
+  const target: Element | null = getRealEventTarget(nativeEvent);
+  if (target !== null) {
+    const field = target as HTMLInputElement;
+    if (typeof field.selectionStart === "number"
+        && typeof field.selectionEnd === "number"
+        && typeof field.value === "string") {
+      return field.value.slice(field.selectionStart, field.selectionEnd);
+    }
+  }
+
+  return "";
+}
+
+/**
  * Records paste, copy and cut.
  *
  * WHY this is worth its own event: a pasted value does not necessarily produce
@@ -1103,11 +1147,7 @@ export function handleClipboardEvent(nativeEvent: ClipboardEvent): void {
   }
 
   const event: RecordedEvent = createBaseEvent(type);
-
-  let text: string = "";
-  if (nativeEvent.clipboardData !== null) {
-    text = nativeEvent.clipboardData.getData("text");
-  }
+  const text: string = readClipboardText(nativeEvent, type);
 
   if (target !== null && isSensitiveField(target)) {
     event.value = "[REDACTED:password]";

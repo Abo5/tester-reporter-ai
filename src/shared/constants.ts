@@ -223,6 +223,14 @@ export const DEFAULT_STEP_PAUSE_MS: number = 3000;
 export const MAX_REPLAYED_GAP_MS: number = 15000;
 
 /**
+ * Time budget a generated spec allows for the ACTIONS, before its own waits.
+ *
+ * Playwright's own default is 30s and that is what the actions get here too;
+ * everything the script waits for deliberately is added on top of it.
+ */
+export const BASE_SPEC_TIMEOUT_MS: number = 30000;
+
+/**
  * Shortest real gap worth emitting. Below this, the pause helper covers it.
  */
 export const MIN_REPLAYED_GAP_MS: number = 400;
@@ -237,6 +245,14 @@ export const MIN_REPLAYED_GAP_MS: number = 400;
  * script exists.
  */
 export const TYPING_DELAY_MS: number = 60;
+
+/**
+ * How long the final screenshot may take before it is given up on.
+ *
+ * Short, because it sits in front of stopping the recorder. See
+ * captureFinalScreenshot for what a longer wait cost.
+ */
+export const FINAL_SCREENSHOT_TIMEOUT_MS: number = 2000;
 
 /** Most individual keys stored for one field. See RecordedEvent.keystrokes. */
 export const MAX_KEYSTROKES_PER_FIELD: number = 200;

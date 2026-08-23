@@ -594,6 +594,7 @@ export async function buildEvidenceBundle(
     redactionSummary: {},
     truncationNotes: truncationNotes,
     finalScreenshotBase64: finalScreenshotBase64,
+    testerExpectedResult: input.session.testerExpectedResult ?? "",
     finalScreenshotMimeType: finalScreenshotMimeType,
     estimatedInputTokens: 0,
   };

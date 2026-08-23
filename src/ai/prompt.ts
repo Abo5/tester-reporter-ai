@@ -175,6 +175,23 @@ export function buildEvidenceText(bundle: AIEvidenceBundle): string {
 
   sections.push(buildLanguageInstruction(bundle.reportLanguage));
   sections.push("");
+  // The tester's own answer to the one question the evidence cannot settle.
+  const testerExpectation: string =
+    typeof bundle.testerExpectedResult === "string"
+      ? bundle.testerExpectedResult
+      : "";
+  if (testerExpectation.trim() !== "") {
+    sections.push("");
+    sections.push("=== EXPECTED BEHAVIOR, STATED BY THE TESTER ===");
+    sections.push(
+      "The tester who recorded this session says the application SHOULD have "
+      + "done the following. This is a human assertion, not something the "
+      + "recording proves. Use it as the Expected Behavior instead of the "
+      + "not-determinable sentence, keep their meaning, and do not treat it as "
+      + "evidence for anything else in the report:");
+    sections.push(testerExpectation.trim());
+  }
+
   sections.push("=== PAGE METADATA ===");
   sections.push(JSON.stringify(bundle.pageMeta, null, 2));
 

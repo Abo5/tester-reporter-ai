@@ -187,7 +187,12 @@ test("no step SYNCHRONISES on a sleep", () => {
   const spec = api.generatePlaywrightSpec(
     SESSION, buildWorkedExampleTrace(), FAILING_REQUEST);
 
-  assert.ok(!spec.includes("setTimeout"));
+  // test.setTimeout() is a BUDGET, not a sleep - it says how long the script is
+  // allowed to take, and the script needs it because it waits on purpose. A
+  // bare setTimeout() would be a hand-rolled delay, which is the thing this
+  // rule exists to keep out.
+  assert.ok(!/[^.]\bsetTimeout\(/.test(spec.replace(/test\.setTimeout\(/g, "")),
+    "a hand-rolled setTimeout leaked into the generated script");
 
   // Every waitForTimeout lives in a NAMED HELPER, never inline in a step.
   // There are two, and each is a deliberate viewing or timing aid rather than
@@ -938,4 +943,116 @@ test("CI can switch the pacing off without editing the file", () => {
   assert.ok(spec.includes("process.env.REPLAY_SPEED ?? 1"));
   assert.ok(spec.includes("if (replaySpeed <= 0)"),
     "REPLAY_SPEED=0 must skip the wait entirely, not divide by zero");
+});
+
+// -----------------------------------------------------------------------------
+// Copy and paste, and the link between them
+//
+// "What was copied and where it was pasted must be mentioned." A pasted value
+// with no origin looks like a value that arrived from nowhere; the same value
+// traced back to the copy explains the journey.
+// -----------------------------------------------------------------------------
+
+test("a paste is traced back to the copy it came from", () => {
+  const copied = makeEvent(0, "copy", {
+    locator: cssLocator(".result-row"),
+    value: "TN-40192",
+    wallClockMs: 10000,
+    videoOffsetMs: 9000,
+  });
+  const pasted = makeEvent(1, "paste", {
+    locator: cssLocator("#tenant"),
+    value: "TN-40192",
+    wallClockMs: 20000,
+    videoOffsetMs: 19000,
+  });
+
+  const note = api.describePasteSource(pasted, [copied, pasted]);
+  assert.match(note, /copy-ed it earlier/);
+  assert.match(note, /00:09/, "the note must point at the moment in the video");
+});
+
+test("a paste from outside the recording says so instead of guessing", () => {
+  const pasted = makeEvent(0, "paste", {
+    locator: cssLocator("#tenant"),
+    value: "TN-99999",
+    wallClockMs: 20000,
+  });
+
+  const note = api.describePasteSource(pasted, [pasted]);
+  assert.match(note, /not copied anywhere in this recording/);
+  assert.match(note, /another tab, or a ticket/);
+});
+
+test("a copy is replayed by writing to the clipboard, so a later paste finds it", () => {
+  const copied = makeEvent(0, "copy", {
+    locator: cssLocator(".result-row"),
+    value: "TN-40192",
+    wallClockMs: 10000,
+  });
+  const spec = api.generatePlaywrightSpec(SESSION, [copied], []);
+
+  // A bare ControlOrMeta+c cannot work: replaying the tester's exact selection
+  // is not generally possible, so the paste step below would have nothing to
+  // find.
+  assert.ok(spec.includes("navigator.clipboard.writeText"),
+    `the copied text never reaches the clipboard:\n${spec}`);
+  assert.ok(spec.includes("clipboard-write permission"),
+    "the script must say what permission it needs, or it fails mysteriously");
+});
+
+test("a copied secret is never written to the clipboard in the script", () => {
+  const copied = makeEvent(0, "copy", {
+    locator: cssLocator("#password"),
+    value: "[REDACTED:password]",
+    valueWasRedacted: true,
+    wallClockMs: 10000,
+  });
+  const spec = api.generatePlaywrightSpec(SESSION, [copied], []);
+
+  assert.ok(!spec.includes("navigator.clipboard.writeText"),
+    "a redacted value must not be written to the clipboard");
+  assert.ok(spec.includes("ControlOrMeta+c"),
+    "the action still has to appear as a step");
+});
+
+test("the paste step offers the application's own paste handler as an option", () => {
+  const pasted = makeEvent(0, "paste", {
+    locator: cssLocator("#tenant"),
+    value: "TN-40192",
+    wallClockMs: 10000,
+  });
+  const spec = api.generatePlaywrightSpec(SESSION, [pasted], []);
+
+  assert.ok(spec.includes("ControlOrMeta+v"),
+    "a field that validates on paste and not on fill needs the real keystroke");
+});
+
+test("the script gives itself enough time for its own pauses", () => {
+  // Adding the pacing broke the round-trip test - the check that a generated
+  // script actually replays, which is the product's central promise. The script
+  // waited past Playwright's 30s default and died with "Target page, context or
+  // browser has been closed", which reads like a broken script rather than one
+  // that was not given long enough.
+  const spec = api.generatePlaywrightSpec(
+    SESSION, buildWorkedExampleTrace(), FAILING_REQUEST);
+
+  assert.ok(spec.includes("test.setTimeout("),
+    `the script never raises its own timeout:\n${spec}`);
+  assert.ok(spec.includes("* stepPauseMs"),
+    "the budget must be derived from the same variable as the waits");
+  assert.ok(spec.includes("replaySpeed > 0 ?"),
+    "turning the pacing off must shrink the budget, not leave it oversized");
+});
+
+test("the gap total is capped the same way the emitted waits are", () => {
+  // Otherwise a tester who answered the phone produces a four-minute timeout on
+  // a script that waits fifteen seconds.
+  const events = [
+    makeEvent(0, "click", { locator: cssLocator("#a"), wallClockMs: 0 }),
+    makeEvent(1, "click", { locator: cssLocator("#b"), wallClockMs: 240000 }),
+    makeEvent(2, "click", { locator: cssLocator("#c"), wallClockMs: 243000 }),
+  ];
+
+  assert.equal(api.totalRecordedGapMs(events), 15000 + 3000);
 });

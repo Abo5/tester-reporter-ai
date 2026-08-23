@@ -84,6 +84,7 @@ export async function createSession(
     videoDowngradeReason: "",
     interactionCaptureDegradedReason: input.interactionCaptureDegradedReason,
     finalScreenshotDataUrl: "",
+    testerExpectedResult: "",
   };
 
   await putRecord<RecordingSession>(STORE_SESSIONS, session);
@@ -117,6 +118,9 @@ export function normaliseSession(stored: RecordingSession): RecordingSession {
 
   if (typeof session.finalScreenshotDataUrl !== "string") {
     session.finalScreenshotDataUrl = "";
+  }
+  if (typeof session.testerExpectedResult !== "string") {
+    session.testerExpectedResult = "";
   }
   if (typeof session.interactionCaptureDegradedReason !== "string") {
     session.interactionCaptureDegradedReason = "";

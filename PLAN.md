@@ -8061,6 +8061,121 @@ now loads with zero page errors and its 3,927-character script intact.
 
 ---
 
+### 19.u A missing screenshot became a missing video
+
+The tester reported that the video did not appear. Their newest session:
+
+```
+612bc332  OrangeHRM  media: { state: "failed", bytes: 0,
+          why: "The recorder did not report back, so no video was stored" }
+```
+
+while the four before it all held 0.8-3.6 MB of real recording. So it was a
+regression, and it was mine.
+
+`captureFinalScreenshot` - added the day before - was awaited on the path to
+stopping the recorder. `chrome.tabs.captureVisibleTab` does not always reject
+when it cannot deliver; on a window that is not visible it can simply never
+settle. The stop message then never reaches the offscreen document, the
+offscreen document never reports back, and fifteen seconds later the safety net
+finishes the session without media.
+
+**A convenience blocked the artifact.** The still image is a nice-to-have; the
+video is the product. Anything optional sitting in front of something essential
+now gets a bound: `withTimeout(..., 2000)`. `video.e2e.mjs` wedges
+`captureVisibleTab` with a promise that never settles and asserts the session
+still finishes with its video - it finishes in 769ms with 90KB recorded, where
+before it took the full fifteen seconds and got nothing.
+
+### 19.v Copy recorded nothing, for a reason worth knowing
+
+"I right-clicked and copied text on the login page twice and it is not in the
+script or the report."
+
+It was recorded. It was recorded **empty**. On a `copy` or `cut` the event fires
+BEFORE the clipboard is written - that is the entire point of the event, it is
+your chance to change what gets copied - so `clipboardData.getData("text")`
+returns `""` every time. What the tester copied is the current **selection**.
+([MDN: Element: copy event](https://developer.mozilla.org/docs/Web/API/Window/copy_event))
+
+`readClipboardText()` now reads the selection for copy and cut, falls back to
+the field's own selection range for a cut inside an input, and keeps
+`clipboardData` for paste, where it is correct. A browser test copies a real
+selection and gets `["Right-click this row"]` back.
+
+With the text in hand, two things the tester asked for follow:
+
+- **Where it went.** `describePasteSource()` matches a pasted value against
+  earlier copies and writes it into the script: *"They copy-ed it earlier in
+  this session, at 00:09."* When nothing matches it says so rather than
+  guessing - the text came from another tab or a ticket.
+- **Replay that works.** A bare `ControlOrMeta+c` cannot reproduce a copy: the
+  tester's exact selection is not generally replayable, so a later paste would
+  find an empty clipboard. The script writes the text to the clipboard instead
+  (`navigator.clipboard.writeText`), and says it needs `clipboard-write`
+  permission. A redacted value is never written - the step still appears, as a
+  keystroke, with nothing attached.
+  ([Playwright clipboard testing](https://scrolltest.com/playwright-clipboard-copy-paste-testing/))
+
+### 19.w Expected Behavior, from the person who knows
+
+Expected Behavior is the one field a recording cannot supply. A video shows what
+the application did; it does not show what the specification said it should do,
+so the model is required to write *"Expected behavior not determinable from the
+recording - requires tester input."* That is correct, and it is also the least
+useful line in the report, because the tester knows the answer and had nowhere
+to put it.
+
+The review page now has a box for it, next to the report, with a button that
+puts it in. It is stored on the session, and it is sent to the model on the next
+generation under a heading that says plainly what it is: a **human assertion**,
+not something the recording proves, to be used as Expected Behavior and not as
+evidence for anything else.
+
+The attribution - `(stated by the tester)` - is not decoration. The whole
+pipeline is built on being able to tell what was observed from what was
+inferred, and a human sentence silently occupying a field the model was forbidden
+to invent would erase exactly that distinction.
+
+---
+
+### 19.x The pacing broke the one test that matters
+
+Adding the tester's real pauses to the generated script broke the round-trip
+test — the check that a generated script actually replays, which is the
+product's central promise. The failure read:
+
+```
+Error: page.waitForTimeout: Target page, context or browser has been closed
+  > 22 |       await page.waitForTimeout(stepPauseMs);
+```
+
+A script that waits three seconds between steps, plus the tester's own gaps,
+does not finish inside Playwright's default thirty-second timeout. Nothing about
+the message says so: it reads like a broken script rather than one that was not
+given long enough.
+
+The fix belongs in the generated file, not in a config the tester does not have.
+`test.setTimeout()` is now emitted, computed at run time **from the same
+variables the waits use**:
+
+```ts
+test.setTimeout(30000 + 5 * stepPauseMs + (replaySpeed > 0 ? 2122 / replaySpeed : 0));
+```
+
+so turning the pacing off shrinks the budget with it, rather than leaving a
+five-minute allowance on a script that now takes nine seconds. The gap total is
+capped exactly as the emitted waits are, or a tester who answered the phone
+would produce a four-minute timeout on a script that waits fifteen.
+
+This also forced a rule to be stated more precisely. The suite has asserted
+since early on that a generated spec contains no `setTimeout`. `test.setTimeout`
+is a *budget*, not a sleep — it says how long the script may take. The
+assertion now excludes it by name and still rejects a hand-rolled delay, which
+is the thing the rule was written to keep out.
+
+---
+
 ## 20. Browser verification — what running it actually proved
 
 Section 19.2 said the media path and the Chrome APIs were "still theory". They are not

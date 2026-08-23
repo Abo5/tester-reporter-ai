@@ -200,7 +200,7 @@ Every direct action, in the session and in the generated script:
 |---|---|---|
 | Click, double-click | ✅ | `.click()`, `.dblclick()` |
 | Type | ✅ every keystroke, corrections included | `.pressSequentially()` — real key events |
-| Paste, copy, cut | ✅ | `.fill()` for paste, deliberately |
+| Paste, copy, cut | ✅ with the text, and where it came from | `navigator.clipboard.writeText()` then `.fill()` |
 | Right-click, middle-click | ✅ | `.click({ button: … })` |
 | Enter, Tab, Escape, arrows, Home/End… | ✅ | `.press()` |
 | Any Ctrl / Alt / Meta shortcut | ✅ | `.press('Control+f')`, flagged if the browser owns it |
@@ -216,6 +216,18 @@ settles after two, a toast that vanishes after five, none of them happen when
 every step runs 40ms after the last. Gaps are capped at 15s so one interruption
 does not stall the run, and `REPLAY_SPEED=0` turns the pacing off for CI
 (`REPLAY_SPEED=2` runs at double speed).
+
+**Copy is traced to paste.** The script says where a pasted value came from —
+*"They copy-ed it earlier in this session, at 00:09"* — or says plainly that it
+came from outside the recording. Copying is replayed by writing the text to the
+clipboard, so a later paste in the same script finds it; that needs
+`clipboard-write` permission, and the generated script says so.
+
+**Expected Behavior is yours to write.** The model is required to say "not
+determinable from the recording" rather than invent what should have happened.
+The review page has a box next to the report where you say it, and a button that
+puts it in — tagged `(stated by the tester)`, because a human assertion and a
+machine inference are different kinds of claim.
 
 **A picture of the final state goes in the report.** The moment you stop
 recording is the moment the defect is on screen — it is why you stopped. It is

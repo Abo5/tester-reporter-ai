@@ -34,6 +34,39 @@ export function formatReportAsPlainText(report: GeneratedBugReport): string {
 }
 
 /**
+ * The report with the tester's own Expected Behavior in place of the model's.
+ *
+ * WHAT: returns the same six-field template, with Expected Behavior replaced
+ * when the tester has written one, and marked as theirs.
+ *
+ * WHY the attribution is not optional: the model is REQUIRED to write "not
+ * determinable from the recording" when the evidence cannot establish what
+ * should have happened, and that honesty is the point of the whole pipeline.
+ * Silently overwriting it with a human sentence would erase the distinction
+ * between what was observed and what someone believes. The tag keeps both.
+ */
+export function formatReportWithTesterExpectation(
+  report: GeneratedBugReport,
+  testerExpectedResult: string,
+): string {
+  const baseText: string = formatReportAsPlainText(report);
+  const trimmed: string = testerExpectedResult.trim();
+
+  if (trimmed === "") {
+    return baseText;
+  }
+
+  const lines: string[] = baseText.split("\n");
+  for (let index = 0; index < lines.length; index = index + 1) {
+    if (lines[index].startsWith("Expected Behavior: ")) {
+      lines[index] = "Expected Behavior: " + trimmed + " (stated by the tester)";
+    }
+  }
+
+  return lines.join("\n");
+}
+
+/**
  * Renders the fixed template PLUS the metadata a tester may want to paste too.
  *
  * Kept separate from formatReportAsPlainText() so the fixed six-field template

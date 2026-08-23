@@ -24,6 +24,7 @@ import {
   TYPING_DELAY_MS,
   MAX_REPLAYED_GAP_MS,
   MIN_REPLAYED_GAP_MS,
+  BASE_SPEC_TIMEOUT_MS,
 } from "../shared/constants";
 
 /**
@@ -189,22 +190,43 @@ function generateStatementsForEvent(
         INDENT + "await " + locatorExpression
         + ".fill(process.env.TEST_SECRET_VALUE ?? '');");
     } else {
+      const source: string = describePasteSource(event, allEvents);
       lines.push(
-        INDENT + "// The tester PASTED this rather than typing it. fill() is "
-        + "the closest replay: it sets the value in one step, the way a paste "
-        + "does, which is the point - a field that validates on keyup and not "
-        + "on paste behaves differently here than under pressSequentially.");
+        INDENT + "// The tester PASTED this rather than typing it." + source
+        + " fill() is the closest replay: it sets the value in one step, the "
+        + "way a paste does, which is the point - a field that validates on "
+        + "keyup and not on paste behaves differently here than under "
+        + "pressSequentially.");
       lines.push(
         INDENT + "await " + locatorExpression + ".fill(" + quote(event.value) + ");");
+      lines.push(
+        INDENT + "// To exercise the application's own paste handler instead, "
+        + "use: await " + locatorExpression + ".press('ControlOrMeta+v');");
     }
   } else if (event.type === "copy" || event.type === "cut") {
-    lines.push(
-      INDENT + "// The tester " + event.type + "-ed here. The clipboard is not "
-      + "part of the page and Playwright does not replay it; this line records "
-      + "what happened.");
-    lines.push(
-      INDENT + "await " + locatorExpression + ".press("
-      + quote(event.type === "copy" ? "Control+c" : "Control+x") + ");");
+    if (event.valueWasRedacted || event.value === "") {
+      lines.push(
+        INDENT + "// The tester " + event.type + "-ed here. The text is not "
+        + "reproduced" + (event.valueWasRedacted ? " because it looked sensitive." : "."));
+      lines.push(
+        INDENT + "await " + locatorExpression + ".press("
+        + quote(event.type === "copy" ? "ControlOrMeta+c" : "ControlOrMeta+x") + ");");
+    } else {
+      // Put the text ON the clipboard so a later paste in this same script
+      // finds it, which a bare ControlOrMeta+c cannot guarantee: replaying the
+      // tester's exact selection is not generally possible, and without the
+      // clipboard content the paste step below has nothing to paste.
+      //
+      // Needs clipboard permission, granted in the config or with
+      // context.grantPermissions(['clipboard-read', 'clipboard-write']).
+      lines.push(
+        INDENT + "// The tester " + event.type + "-ed this text. Reproduced by "
+        + "writing it to the clipboard, so the paste step below has something "
+        + "to find. Requires clipboard-write permission.");
+      lines.push(
+        INDENT + "await page.evaluate((text) => navigator.clipboard.writeText(text), "
+        + quote(event.value) + ");");
+    }
   } else if (event.type === "drag-drop") {
     const dropExpression: string =
       event.dropTargetLocator === null
@@ -290,6 +312,49 @@ function buildHeaderLines(
 
 
 
+
+/**
+ * Says where a pasted value came from, when the recording knows.
+ *
+ * WHY it is worth tracing: "the tester pasted TN-40192" and "the tester copied
+ * the tenant id off the search results page and pasted it into the filter" are
+ * different pieces of evidence. The second one explains the journey; the first
+ * looks like a value that arrived from nowhere. The tester asked for exactly
+ * this - what was copied AND where it was pasted.
+ *
+ * Matched by value against an earlier copy or cut, because that is what the
+ * clipboard actually carries. Returns "" when nothing matches, which is normal:
+ * the text may have been copied from another tab, another application, or a
+ * ticket.
+ */
+export function describePasteSource(
+  pasteEvent: RecordedEvent,
+  allEvents: RecordedEvent[],
+): string {
+  if (pasteEvent.value === "") {
+    return "";
+  }
+
+  for (let index = allEvents.length - 1; index >= 0; index = index - 1) {
+    const candidate: RecordedEvent = allEvents[index];
+    if (candidate.wallClockMs > pasteEvent.wallClockMs) {
+      continue;
+    }
+    if (candidate.type !== "copy" && candidate.type !== "cut") {
+      continue;
+    }
+    if (candidate.value !== pasteEvent.value) {
+      continue;
+    }
+
+    return " They " + candidate.type + "-ed it earlier in this session, at "
+      + formatVideoTimestamp(candidate.videoOffsetMs) + ".";
+  }
+
+  return " It was not copied anywhere in this recording, so it came from "
+    + "outside the page - another tab, or a ticket.";
+}
+
 /**
  * A short note when the tester corrected themselves while typing, or "".
  *
@@ -355,6 +420,29 @@ export function describeMousePath(pathValue: string): string {
     + "px travelled";
 }
 
+
+
+/**
+ * Total time the generated script will spend reproducing the tester's pauses.
+ *
+ * Uses the same cap as buildRealGapLines, so the timeout it feeds matches what
+ * the script will actually wait rather than the raw wall clock - a tester who
+ * answered the phone would otherwise produce a four-minute timeout on a script
+ * that waits fifteen seconds.
+ */
+export function totalRecordedGapMs(events: RecordedEvent[]): number {
+  let total: number = 0;
+
+  for (let index = 1; index < events.length; index = index + 1) {
+    const gapMs: number = events[index].wallClockMs - events[index - 1].wallClockMs;
+    if (gapMs < MIN_REPLAYED_GAP_MS) {
+      continue;
+    }
+    total = total + Math.min(gapMs, MAX_REPLAYED_GAP_MS);
+  }
+
+  return total;
+}
 
 /**
  * The lines that reproduce how long the tester actually waited before an
@@ -461,6 +549,46 @@ export function buildPaceHelperLines(): string[] {
 }
 
 /**
+ * The line that stops the script timing out on its own deliberate pauses.
+ *
+ * WHY it is generated rather than left to the runner's config: this script
+ * waits on purpose - three seconds between steps so a person can watch, plus
+ * the real gaps the tester left. A seventeen-step session is a minute of
+ * waiting before a single action is counted, and Playwright's default timeout
+ * is thirty seconds. Without this line the script dies mid-replay with "Target
+ * page, context or browser has been closed", which reads like a broken script
+ * rather than a script that was not given long enough.
+ *
+ * That is not hypothetical: adding the pacing broke the round-trip test, which
+ * is the check that the generated script actually replays - the product's
+ * central promise.
+ *
+ * Computed at RUN TIME from the same variables the waits use, so setting
+ * STEP_PAUSE_MS=0 or REPLAY_SPEED=0 shortens the timeout too rather than
+ * leaving a five-minute budget on a script that now takes nine seconds.
+ */
+export function buildTimeoutLines(
+  stepCount: number,
+  totalRecordedGapMs: number,
+): string[] {
+  const lines: string[] = [];
+
+  lines.push(INDENT + "// This script waits on purpose, so it needs longer than");
+  lines.push(INDENT + "// Playwright's default 30s. Derived from the same");
+  lines.push(INDENT + "// variables as the waits: turn the pacing off and the");
+  lines.push(INDENT + "// budget shrinks with it.");
+  lines.push(
+    INDENT + "test.setTimeout("
+    + String(BASE_SPEC_TIMEOUT_MS)
+    + " + " + String(stepCount) + " * stepPauseMs"
+    + " + (replaySpeed > 0 ? " + String(Math.round(totalRecordedGapMs))
+    + " / replaySpeed : 0));");
+  lines.push("");
+
+  return lines;
+}
+
+/**
  * Generates the whole .spec.ts file.
  *
  * @param session       The session being replayed, for the header and title.
@@ -485,6 +613,12 @@ export function generatePlaywrightSpec(
   const paceLines: string[] = buildPaceHelperLines();
   for (let index = 0; index < paceLines.length; index = index + 1) {
     lines.push(paceLines[index]);
+  }
+
+  const timeoutLines: string[] = buildTimeoutLines(
+    usableEvents.length + 1, totalRecordedGapMs(usableEvents));
+  for (let index = 0; index < timeoutLines.length; index = index + 1) {
+    lines.push(timeoutLines[index]);
   }
 
   // The first statement is always an explicit goto, so the spec is runnable

@@ -348,6 +348,9 @@ test("the evidence text tells the model when no video was sent", () => {
       viewportWidth: 0, viewportHeight: 0, detectedEnvironment: "", userAgent: "",
     },
     redactionCompleted: true, redactionSummary: {}, truncationNotes: [],
+    finalScreenshotBase64: "",
+    finalScreenshotMimeType: "image/png",
+    testerExpectedResult: "",
     estimatedInputTokens: 0,
   };
 
@@ -792,4 +795,78 @@ test("codegen survives an event with no keystrokes array", () => {
   // The path that would have thrown on every pre-existing recording.
   assert.equal(api.describeKeystrokeCorrections(undefined), "");
   assert.equal(api.describeKeystrokeCorrections(null), "");
+});
+
+// -----------------------------------------------------------------------------
+// The tester's own Expected Behavior
+//
+// It is the one field a recording cannot supply. The model is required to write
+// "not determinable" rather than invent it - correct, and also the least useful
+// line in the report, because the tester knows and had nowhere to say so.
+// -----------------------------------------------------------------------------
+
+const REPORT_FOR_EXPECTATION = {
+  title: "Tenant filter loses the selected row after reload",
+  description: "Selecting a row and reloading clears the highlight.",
+  precondition: "Signed in as Admin on the staging tenant list.",
+  stepsToReproduce: ["Open the tenant list", "Select TN-40192", "Reload"],
+  currentBehavior: "The highlight is gone after the reload.",
+  expectedBehavior:
+    "Expected behavior not determinable from the recording — requires tester input.",
+  expectedBehaviorDeterminable: false,
+  severity: "Medium",
+  confidence: "High",
+  unverifiedClaims: [],
+};
+
+test("the tester's sentence replaces the not-determinable line, attributed", () => {
+  const text = api.formatReportWithTesterExpectation(
+    REPORT_FOR_EXPECTATION,
+    "the selected row should stay highlighted after a reload");
+
+  assert.ok(text.includes(
+    "Expected Behavior: the selected row should stay highlighted after a "
+    + "reload (stated by the tester)"),
+    `the tester's sentence did not land:\n${text}`);
+
+  assert.ok(!text.includes("not determinable"),
+    "the placeholder must be gone once a person has answered");
+
+  // Attribution is not optional: a human assertion and a machine inference are
+  // different kinds of claim and the reader must be able to tell them apart.
+  assert.ok(text.includes("(stated by the tester)"));
+});
+
+test("with nothing written, the model's honest sentence stands", () => {
+  const text = api.formatReportWithTesterExpectation(REPORT_FOR_EXPECTATION, "");
+  assert.ok(text.includes("not determinable"),
+    "an empty box must not erase the model's answer");
+  assert.ok(!text.includes("stated by the tester"));
+});
+
+test("the expectation reaches the model as an assertion, not as evidence", () => {
+  const bundle = {
+    sessionId: "s1", reportLanguage: "en", actionTrace: [], playwrightScript: "",
+    domSnapshots: [], elementContext: [], networkFailures: [], consoleErrors: [],
+    video: {
+      deliveryMode: "omitted", mimeType: "", base64Data: "", fileUri: "",
+      keyFrameBase64: [], keyFrameOffsetsMs: [], durationMs: 0, sizeBytes: 0,
+      downgradeReason: "",
+    },
+    pageMeta: {
+      title: "", url: "", documentLang: "", documentDir: "",
+      viewportWidth: 0, viewportHeight: 0, detectedEnvironment: "", userAgent: "",
+    },
+    redactionCompleted: true, redactionSummary: {}, truncationNotes: [],
+    finalScreenshotBase64: "", finalScreenshotMimeType: "image/png",
+    estimatedInputTokens: 0,
+    testerExpectedResult: "the row should stay highlighted after a reload",
+  };
+  const text = api.buildEvidenceText(bundle);
+
+  assert.ok(text.includes("STATED BY THE TESTER"),
+    "the section must be labelled as coming from a person");
+  assert.ok(text.includes("human assertion, not something the recording proves"),
+    "the model must be told not to treat it as evidence");
+  assert.ok(text.includes("the row should stay highlighted after a reload"));
 });

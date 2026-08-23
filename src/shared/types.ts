@@ -396,6 +396,21 @@ export interface RecordingSession {
    */
   finalScreenshotDataUrl: string;
   /**
+   * What the TESTER says should have happened, in their own words.
+   *
+   * WHY this field exists: Expected Behavior is the one part of a bug report a
+   * recording usually cannot supply. A video shows what the application did; it
+   * does not show what the specification said it should do, so the model is
+   * required to write the "not determinable" sentence rather than invent one.
+   * That is correct, and it is also the least useful line in the report.
+   *
+   * The tester knows. This is where they say so, and once they have, it
+   * replaces the model's sentence in the finished report - clearly attributed,
+   * because a human assertion and a machine inference are different kinds of
+   * claim and a reader must be able to tell them apart.
+   */
+  testerExpectedResult: string;
+  /**
    * Set when the session ran without a host grant for the site.
    *
    * WHY it is stored on the session and not merely warned about in the panel:
@@ -523,6 +538,14 @@ export interface AIEvidenceBundle {
    * the final frame is where the defect is - it is why the tester stopped.
    */
   finalScreenshotBase64: string;
+  /**
+   * What the tester says should have happened, or "".
+   *
+   * Sent so the model does not write "not determinable" when someone has
+   * already answered the question. It is a human assertion, not evidence, and
+   * the prompt says so.
+   */
+  testerExpectedResult: string;
   /** "image/png" from captureVisibleTab, "image/jpeg" from a video frame. */
   finalScreenshotMimeType: string;
   /** Rough token estimate computed locally before sending. */
