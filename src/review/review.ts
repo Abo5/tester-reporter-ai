@@ -29,9 +29,11 @@ import type {
 import { getSession, updateSession, deleteSession } from "../storage/sessions";
 import { readLicenceState } from "../storage/licence-store";
 import { buildLocalReport, LOCAL_REPORT_BANNER } from "../report/local-report";
+import type { ActionLine } from "../report/action-lines";
+import { buildActionLines } from "../report/action-lines";
 import { readCredentialMode, UNCONFIGURED_MESSAGE } from "../ai/credentials";
 import { BUILT_IN_GEMINI_API_KEY } from "../shared/constants";
-import { mayGenerateReport, describeLicenceStatus } from "../shared/licence";
+import { mayGenerateReport, describeLicenceStatus, readLicenceStatus } from "../shared/licence";
 import { readEventsForSession } from "../storage/events";
 import {
   readDomSnapshots,
@@ -41,7 +43,7 @@ import {
 } from "../storage/artifacts";
 import { getMediaBlob, deleteMediaForSession, type StoredMedia } from "../storage/media";
 import { readSettings, writeSettings, incrementRequestCount } from "../storage/settings";
-import { generatePlaywrightSpec, buildSpecFileName } from "../codegen/generate-spec";
+import { generatePlaywrightSpec } from "../codegen/generate-spec";
 import {
   buildEvidenceBundle,
   describeRequestCost,
@@ -93,8 +95,6 @@ const stepList = requireElement<HTMLOListElement>("step-list");
 const reportStatusText = requireElement<HTMLElement>("report-status-text");
 const reportActions = requireElement<HTMLElement>("report-actions");
 const generateButton = requireElement<HTMLButtonElement>("generate-button");
-const generateNoVideoButton =
-  requireElement<HTMLButtonElement>("generate-no-video-button");
 const setupPanel = requireElement<HTMLElement>("setup-panel");
 const openSettingsButton = requireElement<HTMLButtonElement>("open-settings-button");
 const unverifiedBanner = requireElement<HTMLElement>("unverified-banner");
@@ -116,12 +116,6 @@ const secondaryList = requireElement<HTMLElement>("secondary-list");
 
 const scriptText = requireElement<HTMLElement>("script-text");
 const copyScriptButton = requireElement<HTMLButtonElement>("copy-script-button");
-const downloadScriptButton = requireElement<HTMLButtonElement>("download-script-button");
-
-const redactionLine = requireElement<HTMLElement>("redaction-line");
-const bundleText = requireElement<HTMLElement>("bundle-text");
-const rawResponseContainer = requireElement<HTMLElement>("raw-response-container");
-const rawResponseText = requireElement<HTMLElement>("raw-response-text");
 
 const consentDialog = requireElement<HTMLDialogElement>("consent-dialog");
 const consentCheckbox = requireElement<HTMLInputElement>("consent-checkbox");
@@ -175,24 +169,6 @@ function flashCopyStatus(text: string): void {
   }, 2000);
 }
 
-/**
- * Triggers a download of a text file.
- * WHY an object URL and not a data: URL: a generated spec can be tens of
- * kilobytes, which is past the practical limit for data: URLs in some browsers.
- */
-function downloadTextFile(fileName: string, contents: string, mimeType: string): void {
-  const blob: Blob = new Blob([contents], { type: mimeType });
-  const url: string = URL.createObjectURL(blob);
-  const link: HTMLAnchorElement = document.createElement("a");
-  link.href = url;
-  link.download = fileName;
-  document.body.append(link);
-  link.click();
-  link.remove();
-  window.setTimeout(function revoke(): void {
-    URL.revokeObjectURL(url);
-  }, 10000);
-}
 
 /** Copies text to the clipboard and reports success or failure honestly. */
 async function copyToClipboard(text: string, label: string): Promise<void> {
@@ -507,29 +483,6 @@ function renderReport(
  * warning is seen before the recording, when it is still abstract. This one is
  * seen next to the result, which is when it explains what they are looking at.
  */
-function renderFinalScreenshot(session: RecordingSession): void {
-  const figure = document.getElementById("final-shot") as HTMLElement | null;
-  const image = document.getElementById("final-shot-image") as HTMLImageElement | null;
-  if (figure === null || image === null) {
-    return;
-  }
-
-  if (session.finalScreenshotDataUrl === "") {
-    figure.hidden = true;
-    return;
-  }
-
-  image.src = session.finalScreenshotDataUrl;
-  figure.hidden = false;
-}
-
-/**
- * Shows the tester, on the review page, that this recording has a hole in it.
- *
- * WHY it is repeated here after the side panel already warned: the side panel
- * warning is seen before the recording, when it is still abstract. This one is
- * seen next to the result, which is when it explains what they are looking at.
- */
 function renderDegradationWarning(session: RecordingSession): void {
   const box = document.getElementById("degraded-box") as HTMLElement | null;
   if (box === null) {
@@ -548,41 +501,40 @@ function renderDegradationWarning(session: RecordingSession): void {
     + " Grant the site in Settings and record again for a full session.";
 }
 
-function renderRedactionSummary(summary: Record<string, number>): void {
-  const names: string[] = Object.keys(summary);
-  if (names.length === 0) {
-    redactionLine.textContent =
-      "Redaction found nothing to remove in this session.";
+/**
+ * Shows the tester, on the review page, that this recording has a hole in it.
+ *
+ * WHY it is repeated here after the side panel already warned: the side panel
+ * warning is seen before the recording, when it is still abstract. This one is
+ * seen next to the result, which is when it explains what they are looking at.
+ */
+function renderFinalScreenshot(session: RecordingSession): void {
+  const figure = document.getElementById("final-shot") as HTMLElement | null;
+  const image = document.getElementById("final-shot-image") as HTMLImageElement | null;
+  if (figure === null || image === null) {
     return;
   }
 
-  const readable: string[] = [];
-  for (let index = 0; index < names.length; index = index + 1) {
-    readable.push(String(summary[names[index]]) + " " + names[index]);
+  if (session.finalScreenshotDataUrl === "") {
+    figure.hidden = true;
+    return;
   }
-  redactionLine.textContent =
-    "Redaction removed " + readable.join(", ") + " before anything was sent.";
+
+  image.src = session.finalScreenshotDataUrl;
+  figure.hidden = false;
 }
 
-/** Renders the evidence bundle so the tester can see exactly what was sent. */
+/**
+ * Reports what is about to be sent, in tokens and money.
+ *
+ * The evidence bundle itself is no longer displayed. It was there so a tester
+ * could see exactly what left the machine, which is a good instinct and was the
+ * wrong surface for it: a megabyte of JSON nobody read, on the page a tester
+ * uses to write a ticket. The redaction gate still runs and still refuses to
+ * send anything it cannot inspect - that guarantee never depended on the
+ * display.
+ */
 function renderBundle(bundle: AIEvidenceBundle): void {
-  // The video payload itself is megabytes of base64 and would freeze the page.
-  const displayable = {
-    ...bundle,
-    video: {
-      ...bundle.video,
-      base64Data: bundle.video.base64Data === "" ? "" : "[omitted from this view]",
-      keyFrameBase64:
-        bundle.video.keyFrameBase64.length === 0
-          ? []
-          : ["[" + String(bundle.video.keyFrameBase64.length)
-             + " key frames omitted from this view]"],
-    },
-  };
-
-  bundleText.textContent = JSON.stringify(displayable, null, 2);
-  renderRedactionSummary(bundle.redactionSummary);
-
   reportStatusText.textContent =
     "Evidence ready: about " + bundle.estimatedInputTokens.toLocaleString()
     + " tokens, including " + describeVideoDelivery(bundle) + ".";
@@ -611,10 +563,16 @@ function describeVideoDelivery(bundle: AIEvidenceBundle): string {
  * immediately. That ordering is the design invariant, not an optimisation.
  */
 async function ensureScriptGenerated(state: LoadedSession): Promise<void> {
-  if (state.session.playwrightScript !== "") {
-    return;
-  }
-
+  // ALWAYS regenerate. The old version returned early when a script was already
+  // stored, which meant a session recorded on an older build kept that build's
+  // script for ever - the extension could learn to handle right-clicks, copies,
+  // pastes and pointer movement, and a session recorded the day before would
+  // still show "Unhandled recorded event type: mouse-path" for the rest of its
+  // life. That is exactly what was reported.
+  //
+  // Regenerating is safe and cheap: generatePlaywrightSpec is a pure function
+  // over events that are already in memory, and it runs in about a millisecond.
+  // The tester's own edits live in editedReportText, not here.
   const script: string = generatePlaywrightSpec(
     state.session,
     state.events,
@@ -660,7 +618,6 @@ async function handleOutcome(
   state: LoadedSession,
   outcome: GeminiOutcome,
 ): Promise<void> {
-  rawResponseContainer.hidden = true;
 
   if (outcome.kind === "success") {
     const videoWasSent: boolean =
@@ -689,9 +646,6 @@ async function handleOutcome(
         "Report ready. " + outcome.bundleUsed.video.downgradeReason;
       reportActions.hidden = true;
     }
-
-    rawResponseContainer.hidden = false;
-    rawResponseText.textContent = outcome.rawResponseText;
     await incrementRequestCount();
     return;
   }
@@ -706,8 +660,6 @@ async function handleOutcome(
 
   if (outcome.kind === "safety-blocked" || outcome.kind === "empty-response"
       || outcome.kind === "malformed-json") {
-    rawResponseContainer.hidden = false;
-    rawResponseText.textContent = outcome.rawResponseText;
 
     if (outcome.kind === "malformed-json") {
       // Surface the validation problems in the same amber banner the tester
@@ -788,7 +740,6 @@ async function runReportGeneration(allowVideoUpload: boolean): Promise<void> {
 
   isGenerating = true;
   generateButton.disabled = true;
-  generateNoVideoButton.disabled = true;
   regenerateButton.disabled = true;
   reportStatusText.textContent = "Preparing the evidence and redacting it…";
   reportActions.hidden = true;
@@ -878,7 +829,6 @@ async function runReportGeneration(allowVideoUpload: boolean): Promise<void> {
   } finally {
     isGenerating = false;
     generateButton.disabled = false;
-    generateNoVideoButton.disabled = false;
     regenerateButton.disabled = false;
   }
 }
@@ -1000,10 +950,7 @@ function installHandlers(): void {
     void startGenerationWithConsent();
   });
 
-  generateNoVideoButton.addEventListener("click", function onGenerateNoVideo(): void {
-    void runReportGeneration(false);
-  });
-
+  
   regenerateButton.addEventListener("click", function onRegenerate(): void {
     void startGenerationWithConsent();
   });
@@ -1043,17 +990,7 @@ function installHandlers(): void {
     void copyToClipboard(loaded.session.playwrightScript, "Script");
   });
 
-  downloadScriptButton.addEventListener("click", function onDownloadScript(): void {
-    if (loaded === null) {
-      return;
-    }
-    downloadTextFile(
-      buildSpecFileName(loaded.session),
-      loaded.session.playwrightScript,
-      "text/typescript",
-    );
-  });
-
+  
   consentCheckbox.addEventListener("change", function onConsentChange(): void {
     consentWithVideo.disabled = !consentCheckbox.checked;
   });
@@ -1147,6 +1084,7 @@ async function initialiseReviewPage(): Promise<void> {
   renderDegradationWarning(state.session);
   renderTesterExpectation(state.session);
   renderFinalScreenshot(state.session);
+  await renderActions(state);
   await renderPageBehaviour(state.session.id);
 
   const currentSettings: ExtensionSettings = await readSettings();
@@ -1160,7 +1098,6 @@ async function initialiseReviewPage(): Promise<void> {
       state.session.lastVideoDeliveryMode !== "omitted",
       false,
     );
-    renderRedactionSummary(state.session.redactionSummary);
     return;
   }
 
@@ -1454,6 +1391,51 @@ async function renderPageBehaviour(sessionId: string): Promise<void> {
 
     row.appendChild(stamp);
     row.appendChild(detail);
+    list.appendChild(row);
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Actions - licensed only
+//
+// Hidden OUTRIGHT without a licence, not greyed out and not teased. A feature a
+// customer can see but not use is an advertisement in the middle of their work;
+// one they cannot see costs them nothing.
+// -----------------------------------------------------------------------------
+
+/** Draws the section for a licensed customer, and nothing at all otherwise. */
+async function renderActions(state: LoadedSession): Promise<void> {
+  const card = document.getElementById("actions-card") as HTMLElement | null;
+  const list = document.getElementById("actions-list") as HTMLOListElement | null;
+  const summary = document.getElementById("actions-summary") as HTMLElement | null;
+  if (card === null || list === null || summary === null) {
+    return;
+  }
+
+  const licence = await readLicenceState();
+  if (readLicenceStatus(licence) !== "licensed") {
+    card.hidden = true;
+    return;
+  }
+
+  const lines: ActionLine[] = buildActionLines(state.events);
+  list.textContent = "";
+  card.hidden = false;
+  summary.textContent = String(lines.length) + " events captured.";
+
+  for (let index = 0; index < lines.length; index = index + 1) {
+    const row = document.createElement("li");
+
+    const stamp = document.createElement("span");
+    stamp.className = "stamp";
+    stamp.textContent = lines[index].stamp;
+
+    const text = document.createElement("span");
+    text.className = "detail";
+    text.textContent = lines[index].text;
+
+    row.appendChild(stamp);
+    row.appendChild(text);
     list.appendChild(row);
   }
 }

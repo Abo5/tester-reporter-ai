@@ -627,4 +627,13 @@ export interface ExtensionSettings {
   monthlyRequestCount: number;
   /** "YYYY-MM" of the month monthlyRequestCount refers to. */
   monthlyRequestCountMonth: string;
+  /**
+   * Record at 1920x1080 instead of 1280x720. Licensed customers only.
+   *
+   * Stored as a plain setting because the gate belongs where the recording
+   * starts, not in the settings object: a customer whose licence lapses should
+   * keep the preference and lose the capability, so that renewing gives it back
+   * without them having to remember they had asked for it.
+   */
+  fullHdVideo: boolean;
 }

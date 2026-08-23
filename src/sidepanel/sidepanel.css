@@ -349,3 +349,31 @@ label[for="note-input"] {
   border: 1px solid var(--warning-border, #e0a83c);
   color: var(--text, #1a1c20);
 }
+
+/* The per-row delete. Quiet until hovered: it is destructive and it sits next
+   to the thing people actually came to click. */
+.session-list li {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.session-list .session-open { flex: 1 1 auto; }
+
+.session-delete {
+  flex: 0 0 auto;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted, #5c6270);
+  border-radius: 6px;
+  padding: 0 10px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.session-delete:hover,
+.session-delete:focus-visible {
+  border-color: var(--danger, #c0332c);
+  color: var(--danger, #c0332c);
+}

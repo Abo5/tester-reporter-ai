@@ -15,6 +15,8 @@ import type {
   FinalSnapshotReply,
 } from "../shared/messages";
 import { FINAL_SCREENSHOT_TIMEOUT_MS } from "../shared/constants";
+import { readLicenceState } from "../storage/licence-store";
+import { readLicenceStatus } from "../shared/licence";
 import { asExtensionMessage, sendMessageIgnoringNoReceiver } from "../shared/messages";
 import type {
   RecordedEvent,
@@ -488,6 +490,9 @@ async function handleStartRecording(
   // extension to have been INVOKED on the tab (icon click, keyboard command,
   // context menu). Host permissions alone are not enough, and the grant is
   // revoked when the tab navigates.
+  const licence = await readLicenceState();
+  const licensedForFullHd: boolean = readLicenceStatus(licence) === "licensed";
+
   let videoFailureReason: string = "";
   try {
     await ensureOffscreenDocument();
@@ -498,6 +503,11 @@ async function handleStartRecording(
       captureMicrophone: captureMicrophone,
       captureTabAudio: settings.captureTabAudio,
       sessionId: sessionId,
+      // Full HD is a licensed feature, decided HERE, where the licence is
+      // known. A customer whose licence lapses keeps the preference and loses
+      // the capability, so renewing gives it back without them having to
+      // remember they had asked for it.
+      fullHdVideo: settings.fullHdVideo && licensedForFullHd,
     });
   } catch (captureError: unknown) {
     videoFailureReason = describeCaptureFailure(captureError);

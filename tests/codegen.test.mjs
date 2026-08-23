@@ -1039,8 +1039,9 @@ test("the script gives itself enough time for its own pauses", () => {
 
   assert.ok(spec.includes("test.setTimeout("),
     `the script never raises its own timeout:\n${spec}`);
-  assert.ok(spec.includes("* stepPauseMs"),
-    "the budget must be derived from the same variable as the waits");
+  assert.ok(spec.includes("(stepPauseMs + navigationSettleMs)"),
+    "the budget must cover BOTH deliberate waits, or a script with several "
+    + "navigations times out on its own settle");
   assert.ok(spec.includes("replaySpeed > 0 ?"),
     "turning the pacing off must shrink the budget, not leave it oversized");
 });
@@ -1055,4 +1056,44 @@ test("the gap total is capped the same way the emitted waits are", () => {
   ];
 
   assert.equal(api.totalRecordedGapMs(events), 15000 + 3000);
+});
+
+// -----------------------------------------------------------------------------
+// Settling after a navigation
+//
+// Playwright's auto-waiting waits for the ELEMENT it is about to touch. It does
+// not wait for a page that is still fetching its data, still redirecting, or
+// about to replace itself - and a single-page application does all three
+// routinely. The next action fires into a half-built page and the tester
+// watching the replay concludes the script is broken.
+// -----------------------------------------------------------------------------
+
+test("a goto and a reload are both followed by a settle", () => {
+  const events = [
+    makeEvent(0, "navigate", { pageUrl: "https://staging.example.sa/a" }),
+    makeEvent(1, "reload", { pageUrl: "https://staging.example.sa/a" }),
+    makeEvent(2, "click", { locator: cssLocator("#go") }),
+  ];
+  const spec = api.generatePlaywrightSpec(SESSION, events, []);
+
+  const settles = spec.split("await settleAfterNavigation();").length - 1;
+  assert.ok(settles >= 2,
+    `expected a settle after the goto and after the reload, found ${settles}`);
+});
+
+test("the settle is five seconds and CI can switch it off", () => {
+  const spec = api.generatePlaywrightSpec(SESSION, buildWorkedExampleTrace(), []);
+  assert.ok(spec.includes("process.env.NAVIGATION_SETTLE_MS ?? 5000"));
+  assert.ok(spec.includes("if (navigationSettleMs > 0)"),
+    "NAVIGATION_SETTLE_MS=0 must skip the wait entirely");
+});
+
+test("a click is NOT followed by a settle", () => {
+  // Only page loads need it. Putting one after every action would double the
+  // length of a replay for no reason.
+  const spec = api.generatePlaywrightSpec(
+    SESSION, [makeEvent(0, "click", { locator: cssLocator("#go") })], []);
+
+  const settles = spec.split("await settleAfterNavigation();").length - 1;
+  assert.equal(settles, 0);
 });

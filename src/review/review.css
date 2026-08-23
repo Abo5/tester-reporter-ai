@@ -489,3 +489,32 @@ dialog p {
 
 .behaviour-list .kind-network .detail { color: var(--danger, #c0332c); }
 .behaviour-list .kind-console .detail { color: var(--text, #1a1c20); }
+
+/* The Actions list: the raw record, licensed only. Dense on purpose - it is
+   meant to be scanned, not read. */
+.actions-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 420px;
+  overflow-y: auto;
+  font-size: 13px;
+}
+
+.actions-list li {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 4px 0;
+  border-top: 1px solid var(--border, #d9dce3);
+}
+
+.actions-list li:first-child { border-top: none; }
+
+.actions-list .stamp {
+  flex: 0 0 auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-muted, #5c6270);
+}
+
+.actions-list .detail { word-break: break-word; }

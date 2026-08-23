@@ -111,3 +111,4 @@ export {
 } from "../src/report/local-report";
 export { readCredentialMode } from "../src/ai/credentials";
 export { buildEndpointUrl, buildRequestHeaders } from "../src/ai/gemini";
+export { describeActionLine, buildActionLines } from "../src/report/action-lines";

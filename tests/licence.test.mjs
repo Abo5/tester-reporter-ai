@@ -146,3 +146,59 @@ test("with no proxy the request goes to Gemini with the key header", () => {
   const headers = api.buildRequestHeaders("AIza-example");
   assert.equal(headers["x-goog-api-key"], "AIza-example");
 });
+
+// -----------------------------------------------------------------------------
+// Licensed-only surfaces
+// -----------------------------------------------------------------------------
+
+test("the Actions list describes every event type it may be given", () => {
+  // The raw record. Its value is that nothing was filtered, so an event type it
+  // does not know would show as a bare slug in the middle of readable lines.
+  const base = {
+    index: 0, sessionId: "s", wallClockMs: 0, videoOffsetMs: 0,
+    pageUrl: "https://x.test/", pageTitle: "", tabId: 1, frameId: 0,
+    locator: null, value: "", valueWasRedacted: false, clientX: -1, clientY: -1,
+    domSnapshotId: "", elementContextId: "", keystrokes: [],
+    dropTargetLocator: null,
+  };
+
+  assert.match(api.describeActionLine({ ...base, type: "mouse-path", value: "1,1 2,2 3,3" }),
+    /moved the pointer \(3 points\)/);
+  assert.match(api.describeActionLine({ ...base, type: "input", value: "Admin" }),
+    /typed "Admin"/);
+  assert.match(api.describeActionLine({ ...base, type: "copy", value: "TN-40192" }),
+    /copy "TN-40192"/);
+  assert.match(api.describeActionLine({ ...base, type: "press-key", value: "Control+f" }),
+    /pressed Control\+f/);
+  assert.match(api.describeActionLine({ ...base, type: "navigate", pageUrl: "https://x.test/y" }),
+    /went to https:\/\/x\.test\/y/);
+});
+
+test("a hidden value stays hidden in the Actions list", () => {
+  const line = api.describeActionLine({
+    index: 0, sessionId: "s", type: "input", wallClockMs: 0, videoOffsetMs: 0,
+    pageUrl: "", pageTitle: "", tabId: 1, frameId: 0, locator: null,
+    value: "[REDACTED:password]", valueWasRedacted: true, clientX: -1,
+    clientY: -1, domSnapshotId: "", elementContextId: "", keystrokes: [],
+    dropTargetLocator: null,
+  });
+
+  assert.match(line, /a hidden value/);
+  assert.ok(!line.includes("REDACTED"),
+    "the marker is machinery; the tester should see plain words");
+});
+
+test("typing corrections are shown in the raw record", () => {
+  // The report leaves these out. This list is where they belong: a field typed,
+  // deleted and retyped is often a field that rejected something.
+  const line = api.describeActionLine({
+    index: 0, sessionId: "s", type: "input", wallClockMs: 0, videoOffsetMs: 0,
+    pageUrl: "", pageTitle: "", tabId: 1, frameId: 0, locator: null,
+    value: "Admin", valueWasRedacted: false, clientX: -1, clientY: -1,
+    domSnapshotId: "", elementContextId: "",
+    keystrokes: ["A", "d", "m", "n", "Backspace", "i", "n"],
+    dropTargetLocator: null,
+  });
+
+  assert.match(line, /\[A d m n Backspace i n\]/);
+});

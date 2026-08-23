@@ -99,6 +99,24 @@ export const TARGET_VIDEO_WIDTH: number = 1280;
 export const TARGET_VIDEO_HEIGHT: number = 720;
 export const TARGET_FRAME_RATE: number = 10;
 export const TARGET_VIDEO_BITS_PER_SECOND: number = 1_000_000;
+
+/**
+ * Full HD capture. A licensed feature.
+ *
+ * WHY the default is 720p at 10fps and not this: a bug report is read, not
+ * watched. 720p is enough to see which button was clicked and what the error
+ * said, and it is roughly a third of the bytes - which matters twice over,
+ * because the video is both the largest thing on disk and the largest thing
+ * sent to the model. Full HD is a real improvement for reading small text in a
+ * dense table, and a real cost everywhere else.
+ *
+ * The frame rate goes up with it: 1080p at 10fps looks worse than 720p at 24,
+ * and someone who asked for the better recording did not mean a slideshow.
+ */
+export const FULL_HD_VIDEO_WIDTH: number = 1920;
+export const FULL_HD_VIDEO_HEIGHT: number = 1080;
+export const FULL_HD_FRAME_RATE: number = 24;
+export const FULL_HD_BITS_PER_SECOND: number = 4_000_000;
 export const TARGET_AUDIO_BITS_PER_SECOND: number = 64_000;
 
 /** MediaRecorder timeslice: chunks arrive continuously, not only at stop. */
@@ -298,6 +316,22 @@ export const MAX_REPLAYED_GAP_MS: number = 15000;
  * everything the script waits for deliberately is added on top of it.
  */
 export const BASE_SPEC_TIMEOUT_MS: number = 30000;
+
+/**
+ * How long the generated script waits after a page load or a reload.
+ *
+ * WHY it is separate from the step pause and larger than nothing: Playwright's
+ * auto-waiting waits for the ELEMENT it is about to touch. It does not wait for
+ * a page that is still fetching its data, still redirecting, or about to
+ * replace itself - and a single-page application does all three routinely. The
+ * next action then fires into a half-built page, and a tester watching the
+ * replay concludes the script is broken.
+ *
+ * Five seconds because that is what was asked for, and because it is generous
+ * enough to cover a slow staging server without being long enough to lose
+ * anyone's attention. NAVIGATION_SETTLE_MS=0 turns it off in CI.
+ */
+export const DEFAULT_NAVIGATION_SETTLE_MS: number = 5000;
 
 /**
  * Shortest real gap worth emitting. Below this, the pause helper covers it.

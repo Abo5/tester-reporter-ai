@@ -25,6 +25,7 @@ import {
   MAX_REPLAYED_GAP_MS,
   MIN_REPLAYED_GAP_MS,
   BASE_SPEC_TIMEOUT_MS,
+  DEFAULT_NAVIGATION_SETTLE_MS,
 } from "../shared/constants";
 
 /**
@@ -105,8 +106,10 @@ function generateStatementsForEvent(
       lines.push(INDENT + "await page.waitForURL("
         + urlAsRegExpLiteral(event.pageUrl) + ");");
     }
+    lines.push(INDENT + "await settleAfterNavigation();");
   } else if (event.type === "reload") {
     lines.push(INDENT + "await page.reload();");
+    lines.push(INDENT + "await settleAfterNavigation();");
   } else if (event.type === "click") {
     lines.push(INDENT + "await " + locatorExpression + ".click();");
   } else if (event.type === "dblclick") {
@@ -544,6 +547,22 @@ export function buildPaceHelperLines(): string[] {
   lines.push(INDENT + "  await page.waitForTimeout(Math.round(ms / replaySpeed));");
   lines.push(INDENT + "};");
   lines.push("");
+  lines.push(INDENT + "// After a page load, wait for the application to settle.");
+  lines.push(INDENT + "// Playwright's auto-waiting covers the ELEMENT it is");
+  lines.push(INDENT + "// about to touch; it does not cover a page that is");
+  lines.push(INDENT + "// still fetching its data, redirecting, or replacing");
+  lines.push(INDENT + "// itself. A tester watching a replay sees the next");
+  lines.push(INDENT + "// action fire into a half-built page and calls it");
+  lines.push(INDENT + "// broken. Set NAVIGATION_SETTLE_MS=0 in CI.");
+  lines.push(INDENT + "const navigationSettleMs =");
+  lines.push(INDENT + "  Number(process.env.NAVIGATION_SETTLE_MS ?? "
+    + String(DEFAULT_NAVIGATION_SETTLE_MS) + ");");
+  lines.push(INDENT + "const settleAfterNavigation = async (): Promise<void> => {");
+  lines.push(INDENT + "  if (navigationSettleMs > 0) {");
+  lines.push(INDENT + "    await page.waitForTimeout(navigationSettleMs);");
+  lines.push(INDENT + "  }");
+  lines.push(INDENT + "};");
+  lines.push("");
 
   return lines;
 }
@@ -580,7 +599,7 @@ export function buildTimeoutLines(
   lines.push(
     INDENT + "test.setTimeout("
     + String(BASE_SPEC_TIMEOUT_MS)
-    + " + " + String(stepCount) + " * stepPauseMs"
+    + " + " + String(stepCount) + " * (stepPauseMs + navigationSettleMs)"
     + " + (replaySpeed > 0 ? " + String(Math.round(totalRecordedGapMs))
     + " / replaySpeed : 0));");
   lines.push("");

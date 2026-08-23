@@ -20,6 +20,10 @@ import {
   TARGET_AUDIO_BITS_PER_SECOND,
   RECORDER_CHUNK_INTERVAL_MS,
   PREFERRED_RECORDING_MIME_TYPES,
+  FULL_HD_VIDEO_WIDTH,
+  FULL_HD_VIDEO_HEIGHT,
+  FULL_HD_FRAME_RATE,
+  FULL_HD_BITS_PER_SECOND,
 } from "../shared/constants";
 
 // -----------------------------------------------------------------------------
@@ -55,6 +59,7 @@ let hasTabAudio: boolean = false;
  * downstream pipeline needs the real type to decide whether the video can be
  * sent to the model as video at all.
  */
+let activeFullHd: boolean = false;
 let activeRecordingMimeType: string = "";
 
 // -----------------------------------------------------------------------------
@@ -95,6 +100,7 @@ function chooseRecordingMimeType(): string {
 async function openTabStream(
   tabStreamId: string,
   captureTabAudio: boolean,
+  fullHdVideo: boolean,
 ): Promise<MediaStream> {
   // The cast is genuinely unavoidable: chromeMediaSource and
   // chromeMediaSourceId are Chrome-only constraint keys that do not exist in
@@ -132,7 +138,8 @@ async function openTabStream(
   const stream: MediaStream =
     await navigator.mediaDevices.getUserMedia(chromeConstraints);
 
-  await limitVideoTrackSize(stream);
+  activeFullHd = fullHdVideo;
+  await limitVideoTrackSize(stream, fullHdVideo);
   return stream;
 }
 
@@ -142,16 +149,24 @@ async function openTabStream(
  * Failure here is deliberately non-fatal: a slightly larger recording is a cost
  * problem, whereas refusing to record is a lost session.
  */
-async function limitVideoTrackSize(stream: MediaStream): Promise<void> {
+async function limitVideoTrackSize(
+  stream: MediaStream,
+  fullHd: boolean,
+): Promise<void> {
   const videoTracks: MediaStreamTrack[] = stream.getVideoTracks();
   if (videoTracks.length === 0) {
     return;
   }
+
+  const width: number = fullHd ? FULL_HD_VIDEO_WIDTH : TARGET_VIDEO_WIDTH;
+  const height: number = fullHd ? FULL_HD_VIDEO_HEIGHT : TARGET_VIDEO_HEIGHT;
+  const frameRate: number = fullHd ? FULL_HD_FRAME_RATE : TARGET_FRAME_RATE;
+
   try {
     await videoTracks[0].applyConstraints({
-      width: { max: TARGET_VIDEO_WIDTH },
-      height: { max: TARGET_VIDEO_HEIGHT },
-      frameRate: { max: TARGET_FRAME_RATE },
+      width: { max: width },
+      height: { max: height },
+      frameRate: { max: frameRate },
     });
   } catch (constraintError: unknown) {
     logWarning("offscreen",
@@ -245,6 +260,7 @@ async function startRecording(
   captureMicrophone: boolean,
   captureTabAudio: boolean,
   sessionId: string,
+  fullHdVideo: boolean,
 ): Promise<void> {
   currentSessionId = sessionId;
   recordedChunks = [];
@@ -257,7 +273,7 @@ async function startRecording(
   // later getMediaStreamId for it returns "Cannot capture a tab with an active
   // stream". Retrying - with the same id or a fresh one - cannot work, which is
   // why the request has to be right the first time and why tab audio is opt-in.
-  tabStream = await openTabStream(tabStreamId, captureTabAudio);
+  tabStream = await openTabStream(tabStreamId, captureTabAudio, fullHdVideo);
 
   microphoneStream = null;
   if (captureMicrophone) {
@@ -305,7 +321,9 @@ async function startRecording(
 
   const mimeType: string = chooseRecordingMimeType();
   const recorderOptions: MediaRecorderOptions = {
-    videoBitsPerSecond: TARGET_VIDEO_BITS_PER_SECOND,
+    videoBitsPerSecond: activeFullHd
+      ? FULL_HD_BITS_PER_SECOND
+      : TARGET_VIDEO_BITS_PER_SECOND,
     audioBitsPerSecond: TARGET_AUDIO_BITS_PER_SECOND,
   };
   if (mimeType !== "") {
@@ -524,6 +542,7 @@ function handleRuntimeMessage(rawMessage: unknown): void {
       message.captureMicrophone,
       message.captureTabAudio,
       message.sessionId,
+      message.fullHdVideo,
     ).catch(function onStartError(startError: unknown): void {
       logError("offscreen", "Could not start recording.", startError);
       void reportFailure(String(startError));

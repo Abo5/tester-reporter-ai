@@ -34,6 +34,7 @@ export function createDefaultSettings(): ExtensionSettings {
     retentionDays: DEFAULT_RETENTION_DAYS,
     monthlyRequestCount: 0,
     monthlyRequestCountMonth: currentMonthKey(),
+    fullHdVideo: false,
   };
 }
 
@@ -98,6 +99,7 @@ export async function incrementRequestCount(): Promise<void> {
   await writeSettings({
     monthlyRequestCount: settings.monthlyRequestCount + 1,
     monthlyRequestCountMonth: currentMonthKey(),
+    fullHdVideo: false,
   });
 }
 

@@ -121,6 +121,14 @@ export interface OffscreenStartMessage {
   tabStreamId: string;
   captureMicrophone: boolean;
   /**
+   * Record at 1920x1080/24fps instead of 1280x720/10fps.
+   *
+   * Decided in the service worker, where the licence is known, rather than read
+   * from settings here - the offscreen document should not be the place that
+   * enforces what someone paid for.
+   */
+  fullHdVideo: boolean;
+  /**
    * Whether to ask for the tab's own audio.
    *
    * False on a retry: a machine with no audio output device fails the whole

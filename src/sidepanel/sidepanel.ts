@@ -14,7 +14,7 @@ import type { LicenceState, LicenceStatus } from "../shared/licence";
 import { readLicenceStatus, describeLicenceStatus } from "../shared/licence";
 import { readLicenceState } from "../storage/licence-store";
 import { asExtensionMessage, sendMessageIgnoringNoReceiver } from "../shared/messages";
-import { listSessions } from "../storage/sessions";
+import { listSessions, deleteSession } from "../storage/sessions";
 import { readSettings, writeSettings } from "../storage/settings";
 import { readQuotaStatus, type QuotaStatus } from "../storage/media";
 import { formatVideoTimestamp, formatDuration, formatBytes } from "../shared/time";
@@ -246,7 +246,39 @@ async function renderSessionList(): Promise<void> {
       });
     });
 
-    listItem.append(openButton);
+    // Delete, on the row itself.
+    //
+    // WHY here and not only inside the review page: a tester who recorded three
+    // false starts before the session they meant to keep had to open each one
+    // to throw it away. The confirm is not optional - this deletes a video that
+    // cannot be recovered - and it names the session so a misclick on a crowded
+    // list is caught by reading it.
+    const deleteButton: HTMLButtonElement = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "session-delete";
+    deleteButton.title = "Delete this session";
+    deleteButton.setAttribute("aria-label", "Delete " + session.name);
+    deleteButton.textContent = "✕";
+    deleteButton.addEventListener("click", function onDelete(clickEvent: Event): void {
+      clickEvent.stopPropagation();
+
+      const confirmed: boolean = window.confirm(
+        "Delete \u201c" + session.name + "\u201d?\n\nIts video, its "
+        + "Playwright script and its report go with it. This cannot be undone.");
+      if (!confirmed) {
+        return;
+      }
+
+      void deleteSession(session.id)
+        .then(function afterDelete(): Promise<void> {
+          return renderSessionList();
+        })
+        .catch(function onDeleteError(deleteError: unknown): void {
+          showLocalError("Could not delete that session: " + String(deleteError));
+        });
+    });
+
+    listItem.append(openButton, deleteButton);
     elements.sessionList.append(listItem);
   }
 }

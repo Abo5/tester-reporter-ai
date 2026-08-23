@@ -15,7 +15,7 @@ import type { ExtensionSettings } from "../shared/types";
 import type { CredentialMode } from "../ai/credentials";
 import { readCredentialMode, UNCONFIGURED_MESSAGE } from "../ai/credentials";
 import type { LicenceState } from "../shared/licence";
-import { describeLicenceStatus } from "../shared/licence";
+import { describeLicenceStatus, readLicenceStatus } from "../shared/licence";
 import {
   readLicenceState,
   verifyLicenceKey,
@@ -581,3 +581,51 @@ function installLicenceHandlers(): void {
 }
 
 installLicenceHandlers();
+
+// -----------------------------------------------------------------------------
+// Video quality
+// -----------------------------------------------------------------------------
+
+/** Reflects the setting, and whether the licence allows it to take effect. */
+async function renderFullHd(): Promise<void> {
+  const toggle = document.getElementById("full-hd-video") as HTMLInputElement;
+  const status = document.getElementById("full-hd-status") as HTMLElement;
+
+  const settings = await readSettings();
+  toggle.checked = settings.fullHdVideo;
+
+  const licence: LicenceState = await readLicenceState();
+  const licensed: boolean = readLicenceStatus(licence) === "licensed";
+
+  if (!licensed && settings.fullHdVideo) {
+    // The preference is kept and the capability is not applied. Saying so beats
+    // a switch that is on while nothing it promises is happening.
+    status.textContent =
+      "Saved, but recordings are at 1280×720 until this copy is licensed.";
+    return;
+  }
+  if (!licensed) {
+    status.textContent = "Available with a licence.";
+    return;
+  }
+  status.textContent = settings.fullHdVideo
+    ? "Recordings are at 1920×1080."
+    : "Recordings are at 1280×720.";
+}
+
+/** Persists the toggle. */
+function installFullHdHandler(): void {
+  const toggle = document.getElementById("full-hd-video") as HTMLInputElement;
+
+  toggle.addEventListener("change", function onFullHdChange(): void {
+    void writeSettings({ fullHdVideo: toggle.checked }).then(
+      function afterWrite(): Promise<void> {
+        flashSaved();
+        return renderFullHd();
+      });
+  });
+
+  void renderFullHd();
+}
+
+installFullHdHandler();

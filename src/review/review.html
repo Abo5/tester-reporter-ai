@@ -76,9 +76,6 @@
                 <button type="button" id="generate-button" class="primary">
                   Generate report
                 </button>
-                <button type="button" id="generate-no-video-button" class="secondary">
-                  Generate without video
-                </button>
               </div>
             </div>
 
@@ -168,27 +165,22 @@
               <button type="button" id="copy-script-button" class="secondary">
                 Copy script
               </button>
-              <button type="button" id="download-script-button" class="secondary">
-                Download .spec.ts
-              </button>
             </div>
           </div>
 
-          <div class="card">
-            <h2>Evidence sent to the AI</h2>
+          <!--
+            Actions. Licensed only, and hidden outright otherwise - not greyed
+            out, not teased. Everything the tester did during the recording,
+            every event, in order.
+          -->
+          <div class="card" id="actions-card" hidden>
+            <h2>Actions</h2>
             <p class="hint">
-              Exactly what left this machine, after redaction. Shown so you can see
-              why the report says what it says.
+              Every event captured during this recording, in order, with the
+              moment it happened in the video.
             </p>
-            <p id="redaction-line" class="status-line"></p>
-            <details>
-              <summary>Show the full evidence bundle</summary>
-              <pre id="bundle-text" class="code-block small"></pre>
-            </details>
-            <details id="raw-response-container" hidden>
-              <summary>Raw model response (technical details)</summary>
-              <pre id="raw-response-text" class="code-block small"></pre>
-            </details>
+            <p id="actions-summary" class="status-line"></p>
+            <ol id="actions-list" class="actions-list"></ol>
           </div>
         </section>
       </div>
